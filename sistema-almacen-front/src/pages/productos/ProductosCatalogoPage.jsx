@@ -163,7 +163,8 @@ export default function ProductosCatalogoPage() {
                 <th>Nombre del Producto</th>
                 <th>Categoría</th>
                 <th>U. Medida</th>
-                <th>Stock Actual</th>
+                <th>Stock Total</th>
+                <th>Stock por Almacén</th>
                 <th>Stock Mínimo</th>
                 <th>Costo Unitario Prom.</th>
                 <th>Estado Stock</th>
@@ -176,6 +177,14 @@ export default function ProductosCatalogoPage() {
                 const catNombre = item.categoria?.nombre || 'General';
                 const uniNombre = item.unidad_medida?.nombre || item.unidad_medida?.simbolo || 'Unidad';
 
+                // Stock por Almacén
+                const stockPrincipal = Array.isArray(item.almacenes)
+                  ? (item.almacenes.find((a) => a.id === 1 || String(a.codigo) === 'ALM-01')?.pivot?.stock ?? item.stock_actual)
+                  : item.stock_actual;
+                const stockPlanta3 = Array.isArray(item.almacenes)
+                  ? (item.almacenes.find((a) => a.id === 2 || String(a.codigo) === 'ALM-03')?.pivot?.stock ?? 0)
+                  : 0;
+
                 return (
                   <tr key={item.id}>
                     <td><strong style={{ color: '#2563eb', fontFamily: 'monospace' }}>{item.sku}</strong></td>
@@ -186,6 +195,16 @@ export default function ProductosCatalogoPage() {
                       <strong style={{ color: esStockBajo ? '#dc2626' : '#0f172a', fontSize: '15px' }}>
                         {item.stock_actual}
                       </strong>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', fontSize: '11.5px' }}>
+                        <span style={{ color: '#15803d', fontWeight: '600' }}>
+                          🏢 Principal: <strong>{Number(stockPrincipal).toFixed(0)}</strong>
+                        </span>
+                        <span style={{ color: '#7c3aed', fontWeight: '600' }}>
+                          🏭 Planta 3: <strong>{Number(stockPlanta3).toFixed(0)}</strong>
+                        </span>
+                      </div>
                     </td>
                     <td style={{ color: '#64748b' }}>{item.stock_minimo}</td>
                     <td>
@@ -229,6 +248,12 @@ export default function ProductosCatalogoPage() {
 
             <form onSubmit={handleSubmit}>
               <div className="modal-body">
+                <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', padding: '10px 14px', borderRadius: '8px', marginBottom: '14px', fontSize: '12.5px', color: '#166534', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Info size={16} />
+                  <span>
+                    <strong>Múltiples Almacenes:</strong> Al guardar este producto, se inicializará automáticamente su stock en <strong>Almacén Principal</strong> y <strong>Planta 3</strong>.
+                  </span>
+                </div>
                 <div className="form-row">
                   <div className="form-group">
                     <label>Código SKU / Parte</label>

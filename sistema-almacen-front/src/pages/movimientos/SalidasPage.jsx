@@ -7,12 +7,14 @@ export default function SalidasPage() {
   const [salidas, setSalidas] = useState([]);
   const [personalList, setPersonalList] = useState([]);
   const [productosList, setProductosList] = useState([]);
+  const [almacenes, setAlmacenes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
   // Formulario cabecera
   const [formHeader, setFormHeader] = useState({
+    almacen_id: 1,
     personal_id: '',
     destino_cliente: 'Asignación Interna / Herramientas',
     tipo_salida: 'Despacho a Trabajo',
@@ -31,6 +33,7 @@ export default function SalidasPage() {
       id: 1,
       correlativo: 'NS-2026-0045',
       fecha_emision: '2026-10-06',
+      almacen: { nombre: 'Almacén Principal' },
       personal: { nombres: 'Juan', apellidos: 'Pérez Ramos', dni: '45892104' },
       destino_cliente: 'Mantenimiento Eléctrico',
       tipo_salida: 'Despacho a Trabajo',
@@ -41,6 +44,7 @@ export default function SalidasPage() {
       id: 2,
       correlativo: 'NS-2026-0044',
       fecha_emision: '2026-10-05',
+      almacen: { nombre: 'Planta 3' },
       personal: { nombres: 'Maria', apellidos: 'Gómez Salcedo', dni: '70192384' },
       destino_cliente: 'Telecomunicaciones',
       tipo_salida: 'Despacho a Trabajo',
@@ -53,13 +57,25 @@ export default function SalidasPage() {
     loadInitialData();
   }, []);
 
+  const getStockForWarehouse = (prod, almacenId) => {
+    if (!prod) return 0;
+    if (Array.isArray(prod.almacenes)) {
+      const alm = prod.almacenes.find((a) => String(a.id) === String(almacenId));
+      if (alm && alm.pivot) {
+        return Number(alm.pivot.stock || 0);
+      }
+    }
+    return Number(prod.stock_actual || 0);
+  };
+
   const loadInitialData = async () => {
     try {
       setLoading(true);
-      const [resSal, resPers, resProd] = await Promise.all([
+      const [resSal, resPers, resProd, resAlm] = await Promise.all([
         api.get('/salidas'),
         api.get('/personal'),
         api.get('/productos'),
+        api.get('/almacenes'),
       ]);
 
       const dataSal = resSal.data?.data?.data || resSal.data?.data || resSal.data;
@@ -71,36 +87,62 @@ export default function SalidasPage() {
       const dataProd = resProd.data?.data?.data || resProd.data?.data || resProd.data;
       setProductosList(Array.isArray(dataProd) ? dataProd : []);
 
+      const dataAlm = resAlm.data?.data || resAlm.data;
+      const listAlm = Array.isArray(dataAlm) && dataAlm.length > 0 ? dataAlm : [
+        { id: 1, nombre: 'Almacén Principal', codigo: 'ALM-01' },
+        { id: 2, nombre: 'Planta 3', codigo: 'ALM-03' }
+      ];
+      setAlmacenes(listAlm);
+
       if (dataPers.length > 0) setFormHeader((prev) => ({ ...prev, personal_id: dataPers[0].id }));
     } catch (err) {
       console.warn('Usando datos de respaldo para Salidas:', err);
       setSalidas(mockSalidas);
+      setAlmacenes([
+        { id: 1, nombre: 'Almacén Principal', codigo: 'ALM-01' },
+        { id: 2, nombre: 'Planta 3', codigo: 'ALM-03' }
+      ]);
     } finally {
       setLoading(false);
     }
   };
 
+  const selectedWorker = personalList.find((p) => String(p.id) === String(formHeader.personal_id));
+  const selectedWorkerArea = selectedWorker?.area || 'General';
+
   const handleOpenModal = () => {
     setErrorMsg('');
+    const defaultAlm = almacenes[0]?.id || 1;
+    const firstProd = productosList[0];
     setFormHeader({
+      almacen_id: defaultAlm,
       personal_id: personalList[0]?.id || '',
-      destino_cliente: 'Asignación Interna / Herramientas',
-      tipo_salida: 'Despacho a Trabajo',
-      numero_referencia: `REF-${Math.floor(100 + Math.random() * 900)}`,
-      fecha_emision: new Date().toISOString().split('T')[0],
       observaciones: '',
     });
     setDetalles([
-      { producto_id: productosList[0]?.id || '', cantidad: 1, stock_disponible: productosList[0]?.stock_actual || 0 },
+      { producto_id: firstProd?.id || '', cantidad: 1, stock_disponible: getStockForWarehouse(firstProd, defaultAlm) },
     ]);
     setShowModal(true);
+  };
+
+  const handleAlmacenChange = (almId) => {
+    setFormHeader((prev) => ({ ...prev, almacen_id: almId }));
+    setDetalles((prevDet) =>
+      prevDet.map((d) => {
+        const prod = productosList.find((p) => String(p.id) === String(d.producto_id));
+        return {
+          ...d,
+          stock_disponible: getStockForWarehouse(prod, almId),
+        };
+      })
+    );
   };
 
   const handleAddRow = () => {
     const firstProd = productosList[0];
     setDetalles([
       ...detalles,
-      { producto_id: firstProd?.id || '', cantidad: 1, stock_disponible: firstProd?.stock_actual || 0 },
+      { producto_id: firstProd?.id || '', cantidad: 1, stock_disponible: getStockForWarehouse(firstProd, formHeader.almacen_id) },
     ]);
   };
 
@@ -114,7 +156,7 @@ export default function SalidasPage() {
     updated[index][field] = value;
     if (field === 'producto_id') {
       const prod = productosList.find((p) => String(p.id) === String(value));
-      updated[index].stock_disponible = prod ? Number(prod.stock_actual || 0) : 0;
+      updated[index].stock_disponible = getStockForWarehouse(prod, formHeader.almacen_id);
     }
     setDetalles(updated);
   };
@@ -123,17 +165,19 @@ export default function SalidasPage() {
     e.preventDefault();
     setErrorMsg('');
 
-    // Validación previa de cliente para no exceder stock
+    // Validación previa para no exceder stock del almacén seleccionado
     for (const item of detalles) {
       if (Number(item.cantidad) > Number(item.stock_disponible)) {
-        setErrorMsg(`La cantidad solicitada supera el stock disponible (${item.stock_disponible} u.).`);
+        setErrorMsg(`La cantidad solicitada de un producto supera el stock disponible (${item.stock_disponible} u.) en el almacén seleccionado.`);
         return;
       }
     }
 
     try {
       const payload = {
-        ...formHeader,
+        almacen_id: Number(formHeader.almacen_id || 1),
+        personal_id: formHeader.personal_id,
+        observaciones: formHeader.observaciones,
         detalles: detalles.map((d) => ({
           producto_id: d.producto_id,
           cantidad: Number(d.cantidad),
@@ -147,6 +191,11 @@ export default function SalidasPage() {
       console.error(err);
       setErrorMsg(err.response?.data?.message || 'Error al procesar la salida. Verifique el stock disponible.');
     }
+  };
+
+  const handleExportPdf = (sal) => {
+    const pdfUrl = `http://127.0.0.1:8000/api/salidas/${sal.id}/pdf`;
+    window.open(pdfUrl, '_blank');
   };
 
   return (
@@ -174,9 +223,10 @@ export default function SalidasPage() {
               <tr>
                 <th>Correlativo</th>
                 <th>Fecha Despacho</th>
+                <th>Almacén Origen</th>
                 <th>Asignado A (Personal)</th>
                 <th>DNI Trabajador</th>
-                <th>Tipo / Destino</th>
+                <th>Área / Destino</th>
                 <th>N° Ítems</th>
                 <th>Estado</th>
                 <th>Acciones</th>
@@ -192,6 +242,11 @@ export default function SalidasPage() {
                   </td>
                   <td>{sal.fecha_emision ? String(sal.fecha_emision).split('T')[0] : '2026-10-06'}</td>
                   <td>
+                    <span className="badge badge-purple" style={{ fontWeight: '700' }}>
+                      🏭 {sal.almacen?.nombre || (sal.almacen_id === 2 ? 'Planta 3' : 'Almacén Principal')}
+                    </span>
+                  </td>
+                  <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <UserCheck size={16} color="#2563eb" />
                       <strong style={{ color: '#0f172a' }}>
@@ -204,7 +259,7 @@ export default function SalidasPage() {
                       {sal.personal?.dni || sal.personal?.documento_identidad || '45892104'}
                     </span>
                   </td>
-                  <td><span className="badge badge-info">{sal.destino_cliente || sal.tipo_salida}</span></td>
+                  <td><span className="badge badge-info">{sal.destino_cliente || sal.personal?.area || 'General'}</span></td>
                   <td>{sal.salidas_detalle?.length || sal.detalles?.length || 1} productos</td>
                   <td>
                     <span className="badge badge-success">
@@ -212,7 +267,14 @@ export default function SalidasPage() {
                     </span>
                   </td>
                   <td>
-                    <button className="action-btn" title="Ver Detalle"><Eye size={16} /></button>
+                    <button
+                      className="action-btn"
+                      title="Descargar / Ver Reporte PDF Nota de Salida"
+                      onClick={() => handleExportPdf(sal)}
+                      style={{ color: '#ea580c', borderColor: '#fed7aa', background: '#fff7ed' }}
+                    >
+                      <Eye size={16} />
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -239,53 +301,54 @@ export default function SalidasPage() {
                 )}
 
                 <div className="form-row">
-                  <div className="form-group">
-                    <label>Trabajador Receptante (Personal)</label>
+                  <div className="form-group" style={{ flex: '1.5' }}>
+                    <label style={{ fontWeight: '700', color: '#c2410c' }}>
+                      🏭 Almacén de Origen (Despacho)
+                    </label>
                     <select
                       required
-                      value={formHeader.personal_id}
-                      onChange={(e) => setFormHeader({ ...formHeader, personal_id: e.target.value })}
+                      value={formHeader.almacen_id}
+                      onChange={(e) => handleAlmacenChange(e.target.value)}
+                      style={{ borderColor: '#ea580c', fontWeight: '700', background: '#fff7ed' }}
                     >
-                      <option value="">-- Seleccionar Trabajador --</option>
-                      {personalList.map((pers) => (
-                        <option key={pers.id} value={pers.id}>
-                          {pers.apellidos}, {pers.nombres} (DNI: {pers.dni || pers.documento_identidad}) - {pers.area || 'General'}
+                      {almacenes.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.nombre} ({a.codigo})
                         </option>
                       ))}
                     </select>
                   </div>
 
-                  <div className="form-group">
-                    <label>Tipo de Salida</label>
+                  <div className="form-group" style={{ flex: '2' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <UserCheck size={14} color="#2563eb" /> Trabajador Receptante (Personal)
+                    </label>
                     <select
-                      value={formHeader.tipo_salida}
-                      onChange={(e) => setFormHeader({ ...formHeader, tipo_salida: e.target.value })}
+                      required
+                      value={formHeader.personal_id}
+                      onChange={(e) => setFormHeader({ ...formHeader, personal_id: e.target.value })}
+                      style={{ fontSize: '13.5px', fontWeight: '600' }}
                     >
-                      <option value="Despacho a Trabajo">Despacho a Trabajo / Obra</option>
-                      <option value="Asignación de Herramientas">Asignación de Herramientas</option>
-                      <option value="Consumo Interno">Consumo Interno</option>
+                      <option value="">-- Seleccionar Trabajador --</option>
+                      {personalList.map((pers) => (
+                        <option key={pers.id} value={pers.id}>
+                          {pers.apellidos}, {pers.nombres} (DNI: {pers.dni || pers.documento_identidad})
+                        </option>
+                      ))}
                     </select>
                   </div>
-                </div>
 
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Área / Proyecto / Destino</label>
+                  <div className="form-group" style={{ flex: '1' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      Área de Destino
+                      <span style={{ fontSize: '10px', color: '#16a34a', fontWeight: '700' }}>⚡ Automático</span>
+                    </label>
                     <input
                       type="text"
-                      required
-                      value={formHeader.destino_cliente}
-                      onChange={(e) => setFormHeader({ ...formHeader, destino_cliente: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label>Fecha de Salida</label>
-                    <input
-                      type="date"
-                      required
-                      value={formHeader.fecha_emision}
-                      onChange={(e) => setFormHeader({ ...formHeader, fecha_emision: e.target.value })}
+                      disabled
+                      readOnly
+                      value={selectedWorkerArea}
+                      style={{ background: '#f1f5f9', fontWeight: '700', color: '#0f172a', fontSize: '13px' }}
                     />
                   </div>
                 </div>

@@ -16,6 +16,7 @@ class EntradaCabecera extends Model
     protected $fillable = [
         'requerimiento_id',
         'personal_id',
+        'user_id',
         'proveedor_id',
         'tipo_comprobante',
         'numero_comprobante',
@@ -29,6 +30,11 @@ class EntradaCabecera extends Model
         return [
             'fecha_emision' => 'datetime',
         ];
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'user_id');
     }
 
     public function requerimiento(): BelongsTo

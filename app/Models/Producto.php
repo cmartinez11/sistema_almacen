@@ -56,4 +56,11 @@ class Producto extends Model
     {
         return $this->hasMany(Kardex::class, 'producto_id');
     }
+
+    public function almacenes(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(Almacen::class, 'almacen_producto')
+            ->withPivot('stock', 'costo_unitario')
+            ->withTimestamps();
+    }
 }

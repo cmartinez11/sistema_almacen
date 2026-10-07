@@ -10,11 +10,11 @@ use Illuminate\Http\Request;
 class ProductoController extends Controller
 {
     /**
-     * Listar productos.
+     * Listar productos con almacenes e inventario.
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Producto::with(['categoria', 'unidadMedida']);
+        $query = Producto::with(['categoria', 'unidadMedida', 'almacenes']);
 
         if ($request->filled('buscar')) {
             $buscar = $request->input('buscar');
@@ -28,7 +28,7 @@ class ProductoController extends Controller
             $query->where('categoria_id', $request->input('categoria_id'));
         }
 
-        $perPage = (int) $request->input('per_page', 20);
+        $perPage = (int) $request->input('per_page', 50);
         $productos = $query->latest()->paginate($perPage);
 
         return response()->json([
@@ -38,7 +38,7 @@ class ProductoController extends Controller
     }
 
     /**
-     * Registrar un nuevo producto.
+     * Registrar un nuevo producto con asignación automática a todos los almacenes.
      */
     public function store(Request $request): JsonResponse
     {
@@ -52,21 +52,37 @@ class ProductoController extends Controller
             'costo_unitario' => 'nullable|numeric|min:0',
         ]);
 
+        $stockInicial = (float) ($validated['stock_actual'] ?? 0);
+        $costoUnitario = (float) ($validated['costo_unitario'] ?? 0);
+
         $producto = Producto::create([
             'categoria_id' => $validated['categoria_id'],
             'unidades_medida_id' => $validated['unidades_medida_id'],
             'sku' => $validated['sku'],
             'nombre' => $validated['nombre'],
-            'stock_actual' => $validated['stock_actual'] ?? 0,
+            'stock_actual' => $stockInicial,
             'stock_minimo' => $validated['stock_minimo'] ?? 0,
-            'costo_unitario' => $validated['costo_unitario'] ?? 0,
+            'costo_unitario' => $costoUnitario,
         ]);
 
-        $producto->load(['categoria', 'unidadMedida']);
+        // Asignar automáticamente en la tabla pivot almacen_producto para todos los almacenes activos
+        $almacenes = \App\Models\Almacen::where('estado', 'activo')->get();
+        foreach ($almacenes as $alm) {
+            \Illuminate\Support\Facades\DB::table('almacen_producto')->insert([
+                'almacen_id' => $alm->id,
+                'producto_id' => $producto->id,
+                'stock' => $alm->id === 1 ? $stockInicial : 0,
+                'costo_unitario' => $costoUnitario,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        $producto->load(['categoria', 'unidadMedida', 'almacenes']);
 
         return response()->json([
             'status' => 'success',
-            'message' => 'Producto registrado correctamente',
+            'message' => 'Producto registrado correctamente en todos los almacenes.',
             'data' => $producto,
         ], 201);
     }

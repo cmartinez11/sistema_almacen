@@ -187,10 +187,12 @@
                 <td>
                     <span class="label">Recepción por:</span><br>
                     <span class="value">
-                        @if($entrada->personal)
+                        @if($entrada->user)
+                            {{ $entrada->user->name }}
+                        @elseif($entrada->personal)
                             {{ $entrada->personal->nombres }} {{ $entrada->personal->apellidos }}
                         @else
-                            Almacenero de Turno
+                            Almacenero Logueado
                         @endif
                     </span>
                 </td>
@@ -243,6 +245,8 @@
                         }
                     }
                     $cantRecibida = (float) $det->cantidad;
+                    $totalAcumulado = isset($det->total_acumulado) ? (float) $det->total_acumulado : $cantRecibida;
+                    $saldoPendiente = $cantSolicitada !== null ? max(0, $cantSolicitada - $totalAcumulado) : 0;
                 @endphp
                 <tr>
                     <td style="text-align: center; font-weight: bold; color: #64748b;">{{ $index + 1 }}</td>
@@ -257,10 +261,10 @@
                     <td style="text-align: center;">
                         @if($cantSolicitada === null)
                             <span class="badge badge-info">Manual</span>
-                        @elseif($cantRecibida < $cantSolicitada)
-                            <span class="badge badge-parcial">Faltan {{ number_format($cantSolicitada - $cantRecibida, 2) }}</span>
-                        @else
+                        @elseif($saldoPendiente <= 0)
                             <span class="badge badge-completo">Completo</span>
+                        @else
+                            <span class="badge badge-parcial">Faltan {{ number_format($saldoPendiente, 2) }}</span>
                         @endif
                     </td>
                 </tr>

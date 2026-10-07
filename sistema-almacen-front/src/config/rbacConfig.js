@@ -115,6 +115,13 @@ export const MENU_ITEMS = [
         allowedRoles: [ROLES.ADMINISTRADOR, ROLES.ALMACENERO, ROLES.SUPERVISOR],
       },
       {
+        id: 'movimientos-transferencias',
+        title: 'Transferencias',
+        path: '/movimientos/transferencias',
+        icon: 'ArrowLeftRight',
+        allowedRoles: [ROLES.ADMINISTRADOR, ROLES.ALMACENERO, ROLES.SUPERVISOR],
+      },
+      {
         id: 'movimientos-kardex-fisico',
         title: 'Kardex Físico',
         path: '/movimientos/kardex-fisico',

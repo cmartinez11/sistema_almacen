@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, UserCheck, Phone, Mail, Edit, Trash2, X, Check, Building2, Briefcase } from 'lucide-react';
+import { Plus, Search, UserCheck, Phone, Mail, Edit, Trash2, X, Check, Building2, Briefcase, Eye, Download, PackageCheck, FileText } from 'lucide-react';
 import api from '../../services/api';
 import '../pagesCommon.css';
 
@@ -9,6 +9,12 @@ export default function PersonalPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
+
+  // Estado para el modal de Historial y Custodia
+  const [showHistorialModal, setShowHistorialModal] = useState(false);
+  const [selectedTrabajador, setSelectedTrabajador] = useState(null);
+  const [historialData, setHistorialData] = useState({ salidas: [], resumen_acumulado: [] });
+  const [loadingHistorial, setLoadingHistorial] = useState(false);
 
   const [formData, setFormData] = useState({
     dni: '',
@@ -110,6 +116,29 @@ export default function PersonalPage() {
     }
   };
 
+  const handleOpenHistorial = async (item) => {
+    setSelectedTrabajador(item);
+    setShowHistorialModal(true);
+    setLoadingHistorial(true);
+    try {
+      const res = await api.get(`/personal/${item.id}/historial-salidas`);
+      if (res.data?.status === 'success') {
+        setHistorialData(res.data.data);
+      }
+    } catch (err) {
+      console.error('Error al cargar historial del trabajador:', err);
+      setHistorialData({ salidas: [], resumen_acumulado: [] });
+    } finally {
+      setLoadingHistorial(false);
+    }
+  };
+
+  const handleExportHistorialPdf = () => {
+    if (!selectedTrabajador) return;
+    const pdfUrl = `http://127.0.0.1:8000/api/personal/${selectedTrabajador.id}/historial-pdf`;
+    window.open(pdfUrl, '_blank');
+  };
+
   const filtered = personal.filter(
     (p) =>
       p.nombres?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -201,6 +230,14 @@ export default function PersonalPage() {
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: '4px' }}>
+                      <button
+                        className="action-btn"
+                        onClick={() => handleOpenHistorial(item)}
+                        title="Ver Historial de Asignaciones y Entregas"
+                        style={{ color: '#2563eb', borderColor: '#bfdbfe', background: '#eff6ff' }}
+                      >
+                        <Eye size={16} />
+                      </button>
                       <button className="action-btn" onClick={() => handleOpenModal(item)} title="Editar"><Edit size={16} /></button>
                       <button className="action-btn" onClick={() => handleDelete(item.id)} title="Eliminar" style={{ color: '#ef4444' }}><Trash2 size={16} /></button>
                     </div>
@@ -318,6 +355,130 @@ export default function PersonalPage() {
                 <button type="submit" className="primary-btn"><Check size={16} /> Guardar Trabajador</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL HISTORIAL DE ASIGNACIONES Y ENTREGAS POR TRABAJADOR */}
+      {showHistorialModal && (
+        <div className="modal-overlay">
+          <div className="modal-card" style={{ maxWidth: '820px' }}>
+            <div className="modal-header" style={{ background: '#eff6ff', borderBottom: '1px solid #bfdbfe' }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#1e40af', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <UserCheck size={20} /> Historial de Asignaciones y Entregas
+                </h3>
+                <span style={{ fontSize: '12.5px', color: '#2563eb', fontWeight: '600' }}>
+                  {selectedTrabajador ? `${selectedTrabajador.apellidos}, ${selectedTrabajador.nombres} (DNI: ${selectedTrabajador.dni || selectedTrabajador.documento_identidad})` : ''}
+                </span>
+              </div>
+              <button className="modal-close-btn" onClick={() => setShowHistorialModal(false)}><X size={18} /></button>
+            </div>
+
+            <div className="modal-body" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', background: '#f8fafc', padding: '12px 16px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                <div>
+                  <div style={{ fontSize: '13px', color: '#475569', fontWeight: '600' }}>
+                    Área: <strong style={{ color: '#0f172a' }}>{selectedTrabajador?.area || 'General'}</strong> | Cargo: <strong style={{ color: '#0f172a' }}>{selectedTrabajador?.cargo || 'Operativo'}</strong>
+                  </div>
+                  <span style={{ fontSize: '12px', color: '#16a34a', fontWeight: '700' }}>
+                    Custodia Activa: {historialData.resumen_acumulado?.length || 0} tipo(s) de materiales asignados
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={handleExportHistorialPdf}
+                  style={{ background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)', padding: '8px 14px', fontSize: '13px' }}
+                >
+                  <Download size={15} /> Reporte de Custodia PDF
+                </button>
+              </div>
+
+              {loadingHistorial ? (
+                <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>Cargando historial de entregas...</div>
+              ) : (
+                <>
+                  {/* RESUMEN ACUMULADO EN CUSTODIA */}
+                  <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <PackageCheck size={16} color="#16a34a" /> RESUMEN DE MATERIALES EN CUSTODIA DEL TRABAJADOR
+                  </h4>
+                  {historialData.resumen_acumulado?.length === 0 ? (
+                    <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '8px', color: '#64748b', fontSize: '13px', textAlign: 'center', marginBottom: '20px' }}>
+                      No se registraron entregas de insumos ni herramientas para este trabajador.
+                    </div>
+                  ) : (
+                    <table className="data-table" style={{ marginBottom: '24px' }}>
+                      <thead>
+                        <tr>
+                          <th>SKU</th>
+                          <th>Descripción del Producto / Material</th>
+                          <th>Unidad</th>
+                          <th>Total Entregado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {historialData.resumen_acumulado?.map((r, idx) => (
+                          <tr key={idx}>
+                            <td><strong style={{ fontFamily: 'monospace', color: '#2563eb' }}>{r.sku}</strong></td>
+                            <td style={{ fontWeight: '600' }}>{r.producto}</td>
+                            <td>{r.unidad}</td>
+                            <td>
+                              <strong style={{ color: '#16a34a', fontSize: '14px' }}>
+                                {Number(r.cantidad_total).toFixed(2)} u.
+                              </strong>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+
+                  {/* HISTORIAL DETALLADO POR NOTAS DE SALIDA */}
+                  <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <FileText size={16} color="#ea580c" /> DETALLE DE NOTAS DE SALIDA REGISTRADAS
+                  </h4>
+                  {historialData.salidas?.length === 0 ? (
+                    <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '8px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
+                      Sin Notas de Salida registradas.
+                    </div>
+                  ) : (
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Correlativo</th>
+                          <th>Fecha Despacho</th>
+                          <th>Área / Destino</th>
+                          <th>Materiales Entregados</th>
+                          <th>Ítems</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {historialData.salidas?.map((sal) => (
+                          <tr key={sal.id}>
+                            <td><strong style={{ color: '#ea580c', fontFamily: 'monospace' }}>{sal.correlativo || `NS-2026-00${sal.id}`}</strong></td>
+                            <td>{sal.fecha_emision ? String(sal.fecha_emision).split('T')[0] : '2026-10-06'}</td>
+                            <td><span className="badge badge-info">{sal.destino_cliente || 'Asignación Interna'}</span></td>
+                            <td style={{ fontSize: '12px' }}>
+                              {(sal.salidas_detalle || sal.salidasDetalle || []).map((d, dIdx) => (
+                                <div key={dIdx}>
+                                  • {d.producto?.nombre || 'Producto'} (<strong>{Number(d.cantidad).toFixed(2)} u.</strong>)
+                                </div>
+                              ))}
+                            </td>
+                            <td><strong>{(sal.salidas_detalle || sal.salidasDetalle || []).length} prod.</strong></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button type="button" className="secondary-btn" onClick={() => setShowHistorialModal(false)}>Cerrar</button>
+            </div>
           </div>
         </div>
       )}

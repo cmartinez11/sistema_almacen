@@ -11,12 +11,14 @@ export default function IngresosPage() {
   const [personalList, setPersonalList] = useState([]);
   const [productosList, setProductosList] = useState([]);
   const [requerimientosPedidos, setRequerimientosPedidos] = useState([]);
+  const [almacenes, setAlmacenes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [selectedOcId, setSelectedOcId] = useState('');
 
   // Formulario cabecera
   const [formHeader, setFormHeader] = useState({
+    almacen_id: 1,
     proveedor_id: '',
     personal_id: currentUser.id || '',
     tipo_comprobante: 'GUIA DE REMISION',
@@ -30,8 +32,8 @@ export default function IngresosPage() {
   ]);
 
   const mockIngresos = [
-    { id: 1, correlativo: 'NI-2026-0012', fecha_emision: '2026-10-06', proveedor: { razon_social: 'DISTRIBUIDORA ELECTRICA S.A.C.' }, numero_comprobante: 'GR-001-4821', personal: { nombres: 'Carlos', apellidos: 'Almacenero' }, estado: 'emitido', entradas_detalle: [{}, {}, {}, {}] },
-    { id: 2, correlativo: 'NI-2026-0011', fecha_emision: '2026-10-05', proveedor: { razon_social: 'FERRETERIA INDUSTRIAL SRL' }, numero_comprobante: 'GR-002-1209', personal: { nombres: 'Carlos', apellidos: 'Almacenero' }, estado: 'emitido', entradas_detalle: [{}, {}] },
+    { id: 1, correlativo: 'NI-2026-0012', fecha_emision: '2026-10-06', almacen: { nombre: 'Almacén Principal' }, proveedor: { razon_social: 'DISTRIBUIDORA ELECTRICA S.A.C.' }, numero_comprobante: 'GR-001-4821', personal: { nombres: 'Carlos', apellidos: 'Almacenero' }, estado: 'emitido', entradas_detalle: [{}, {}, {}, {}] },
+    { id: 2, correlativo: 'NI-2026-0011', fecha_emision: '2026-10-05', almacen: { nombre: 'Planta 3' }, proveedor: { razon_social: 'FERRETERIA INDUSTRIAL SRL' }, numero_comprobante: 'GR-002-1209', personal: { nombres: 'Carlos', apellidos: 'Almacenero' }, estado: 'emitido', entradas_detalle: [{}, {}] },
   ];
 
   useEffect(() => {
@@ -41,12 +43,13 @@ export default function IngresosPage() {
   const loadInitialData = async () => {
     try {
       setLoading(true);
-      const [resIng, resProv, resPers, resProd, resReq] = await Promise.all([
+      const [resIng, resProv, resPers, resProd, resReq, resAlm] = await Promise.all([
         api.get('/entradas'),
         api.get('/proveedores'),
         api.get('/personal'),
         api.get('/productos'),
         api.get('/requerimientos?estado=pedido,parcial'),
+        api.get('/almacenes'),
       ]);
 
       const dataIng = resIng.data?.data?.data || resIng.data?.data || resIng.data;
@@ -61,6 +64,13 @@ export default function IngresosPage() {
       const dataProd = resProd.data?.data?.data || resProd.data?.data || resProd.data;
       setProductosList(Array.isArray(dataProd) ? dataProd : []);
 
+      const dataAlm = resAlm.data?.data || resAlm.data;
+      const listAlm = Array.isArray(dataAlm) && dataAlm.length > 0 ? dataAlm : [
+        { id: 1, nombre: 'Almacén Principal', codigo: 'ALM-01' },
+        { id: 2, nombre: 'Planta 3', codigo: 'ALM-03' }
+      ];
+      setAlmacenes(listAlm);
+
       // Filtrar requerimientos en estado "PEDIDO" o "PARCIAL" (Saldos por entregar)
       const dataReq = resReq.data?.data || resReq.data;
       if (Array.isArray(dataReq)) {
@@ -70,6 +80,10 @@ export default function IngresosPage() {
     } catch (err) {
       console.warn('Usando datos de respaldo para Ingresos:', err);
       setIngresos(mockIngresos);
+      setAlmacenes([
+        { id: 1, nombre: 'Almacén Principal', codigo: 'ALM-01' },
+        { id: 2, nombre: 'Planta 3', codigo: 'ALM-03' }
+      ]);
     } finally {
       setLoading(false);
     }
@@ -78,6 +92,7 @@ export default function IngresosPage() {
   const handleOpenModal = () => {
     setSelectedOcId('');
     setFormHeader({
+      almacen_id: almacenes[0]?.id || 1,
       proveedor_id: proveedores[0]?.id || '',
       personal_id: currentUser.id || personalList[0]?.id || 1,
       tipo_comprobante: 'GUIA DE REMISION',
@@ -151,8 +166,10 @@ export default function IngresosPage() {
       const fechaActualSistema = new Date().toISOString();
 
       const payload = {
+        almacen_id: Number(formHeader.almacen_id || 1),
         requerimiento_id: selectedOcId || null,
-        personal_id: formHeader.personal_id || 1,
+        user_id: currentUser.id || null,
+        personal_id: currentUser.personal_id || currentUser.id || null,
         proveedor_id: formHeader.proveedor_id,
         tipo_comprobante: formHeader.tipo_comprobante,
         numero_comprobante: formHeader.numero_comprobante,
@@ -204,6 +221,7 @@ export default function IngresosPage() {
               <tr>
                 <th>Correlativo</th>
                 <th>Fecha Emisión</th>
+                <th>Almacén Destino</th>
                 <th>Proveedor</th>
                 <th>Comprobante / Guía</th>
                 <th>N° Ítems</th>
@@ -221,12 +239,17 @@ export default function IngresosPage() {
                     </strong>
                   </td>
                   <td>{ing.fecha_emision ? String(ing.fecha_emision).split('T')[0] : '2026-10-06'}</td>
+                  <td>
+                    <span className="badge badge-purple" style={{ fontWeight: '700' }}>
+                      🏢 {ing.almacen?.nombre || (ing.almacen_id === 2 ? 'Planta 3' : 'Almacén Principal')}
+                    </span>
+                  </td>
                   <td style={{ fontWeight: '600' }}>
                     {ing.proveedor?.razon_social || 'PROVEEDOR GENERAL'}
                   </td>
                   <td><span className="badge badge-info">{ing.numero_comprobante || 'GR-001'}</span></td>
                   <td>{ing.entradas_detalle?.length || ing.detalles?.length || 1} productos</td>
-                  <td>{ing.personal ? `${ing.personal.nombres} ${ing.personal.apellidos}` : 'Almacenero'}</td>
+                  <td>{ing.user?.name || (ing.personal ? `${ing.personal.nombres} ${ing.personal.apellidos}` : (currentUser.name || 'Almacenero Logueado'))}</td>
                   <td>
                     <span className="badge badge-success" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                       <FileCheck size={12} /> {ing.estado ? ing.estado.toUpperCase() : 'EMITIDO'}
@@ -288,6 +311,24 @@ export default function IngresosPage() {
                 </div>
 
                 <div className="form-row">
+                  <div className="form-group">
+                    <label style={{ fontWeight: '700', color: '#15803d' }}>
+                      🏢 Almacén de Destino (Recepción)
+                    </label>
+                    <select
+                      required
+                      value={formHeader.almacen_id}
+                      onChange={(e) => setFormHeader({ ...formHeader, almacen_id: e.target.value })}
+                      style={{ borderColor: '#16a34a', fontWeight: '700', background: '#f0fdf4' }}
+                    >
+                      {almacenes.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.nombre} ({a.codigo})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="form-group">
                     <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       Proveedor de Origen
@@ -372,11 +413,17 @@ export default function IngresosPage() {
                       <h4 style={{ margin: 0, fontSize: '15px', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <Package size={18} color="#16a34a" /> DETALLE DE PRODUCTOS A INGRESAR
                       </h4>
-                      <span style={{ fontSize: '12px', color: '#64748b' }}>Verifique la cantidad física recibida frente al requerimiento solicitado</span>
+                      <span style={{ fontSize: '12px', color: '#64748b' }}>
+                        {selectedOcId
+                          ? '🔒 Ítems prefijados por la Orden de Compra seleccionada. Ingrese la cantidad física recibida.'
+                          : 'Verifique la cantidad física recibida frente al requerimiento solicitado'}
+                      </span>
                     </div>
-                    <button type="button" className="secondary-btn" onClick={handleAddRow} style={{ padding: '6px 12px', fontSize: '12.5px' }}>
-                      <Plus size={14} /> Añadir Ítem
-                    </button>
+                    {!selectedOcId && (
+                      <button type="button" className="secondary-btn" onClick={handleAddRow} style={{ padding: '6px 12px', fontSize: '12.5px' }}>
+                        <Plus size={14} /> Añadir Ítem
+                      </button>
+                    )}
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -392,10 +439,10 @@ export default function IngresosPage() {
                           key={idx}
                           style={{
                             display: 'grid',
-                            gridTemplateColumns: '2.4fr 1.3fr 1.3fr 1.6fr 40px',
+                            gridTemplateColumns: selectedOcId ? '2.6fr 1.3fr 1.3fr 1.6fr' : '2.4fr 1.3fr 1.3fr 1.6fr 40px',
                             gap: '10px',
                             alignItems: 'center',
-                            background: '#ffffff',
+                            background: selectedOcId ? '#f8fafc' : '#ffffff',
                             border: '1px solid #cbd5e1',
                             padding: '12px 14px',
                             borderRadius: '10px',
@@ -403,12 +450,24 @@ export default function IngresosPage() {
                           }}
                         >
                           <div>
-                            <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569', textTransform: 'uppercase' }}>Producto</label>
+                            <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569', textTransform: 'uppercase', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              Producto
+                              {selectedOcId && <span style={{ fontSize: '10px', color: '#2563eb', fontWeight: '700' }}>🔒 Bloqueado por OC</span>}
+                            </label>
                             <select
                               required
+                              disabled={!!selectedOcId}
                               value={row.producto_id}
                               onChange={(e) => handleItemChange(idx, 'producto_id', e.target.value)}
-                              style={{ padding: '8px', fontSize: '13px' }}
+                              style={{
+                                padding: '8px',
+                                fontSize: '13px',
+                                background: selectedOcId ? '#f1f5f9' : '#ffffff',
+                                cursor: selectedOcId ? 'not-allowed' : 'pointer',
+                                fontWeight: selectedOcId ? '700' : 'normal',
+                                color: selectedOcId ? '#0f172a' : 'inherit',
+                                border: selectedOcId ? '1px solid #cbd5e1' : '1px solid #94a3b8',
+                              }}
                             >
                               <option value="">-- Seleccionar Producto --</option>
                               {productosList.map((prod) => (
@@ -419,7 +478,7 @@ export default function IngresosPage() {
 
                           <div>
                             <label style={{ fontSize: '11px', fontWeight: '700', color: '#475569', textTransform: 'uppercase' }}>Solicitado / Saldo</label>
-                            <div style={{ padding: '6px 8px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', fontSize: '12.5px', fontWeight: '700', color: '#2563eb', textAlign: 'center' }}>
+                            <div style={{ padding: '6px 8px', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', fontSize: '12.5px', fontWeight: '700', color: '#2563eb', textAlign: 'center' }}>
                               {cantidadSolicitada > 0 ? (
                                 <>
                                   <div>{cantidadSolicitada} u. Total</div>
@@ -460,14 +519,16 @@ export default function IngresosPage() {
                             )}
                           </div>
 
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveRow(idx)}
-                            style={{ background: '#fef2f2', border: '1px solid #fca5a5', color: '#dc2626', borderRadius: '8px', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', marginTop: '16px' }}
-                            title="Eliminar ítem"
-                          >
-                            <Trash2 size={16} />
-                          </button>
+                          {!selectedOcId && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveRow(idx)}
+                              style={{ background: '#fef2f2', border: '1px solid #fca5a5', color: '#dc2626', borderRadius: '8px', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', marginTop: '16px' }}
+                              title="Eliminar ítem"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
                         </div>
                       );
                     })}

@@ -162,4 +162,94 @@ class PersonalController extends Controller
             'message' => 'Trabajador eliminado correctamente',
         ], 200);
     }
+
+    /**
+     * Consultar el historial de salidas / asignaciones de materiales para un trabajador.
+     */
+    public function historialSalidas(string $id): JsonResponse
+    {
+        $trabajador = Personal::find($id);
+
+        if (!$trabajador) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Trabajador no encontrado',
+            ], 404);
+        }
+
+        $salidas = \App\Models\SalidaCabecera::where('personal_id', $trabajador->id)
+            ->with(['salidasDetalle.producto.unidadMedida'])
+            ->latest()
+            ->get();
+
+        $resumen = [];
+        foreach ($salidas as $sal) {
+            foreach ($sal->salidasDetalle as $det) {
+                $prodId = $det->producto_id;
+                if (!isset($resumen[$prodId])) {
+                    $resumen[$prodId] = [
+                        'producto_id' => $prodId,
+                        'sku' => $det->producto->sku ?? 'N/A',
+                        'producto' => $det->producto->nombre ?? 'Producto',
+                        'unidad' => $det->producto->unidadMedida->nombre ?? $det->producto->unidad_medida ?? 'UND',
+                        'cantidad_total' => 0,
+                    ];
+                }
+                $resumen[$prodId]['cantidad_total'] += (float) $det->cantidad;
+            }
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'trabajador' => $trabajador,
+                'salidas' => $salidas,
+                'resumen_acumulado' => array_values($resumen),
+            ],
+        ], 200);
+    }
+
+    /**
+     * Generar y descargar el reporte PDF de custodia de bienes asignados al trabajador.
+     */
+    public function exportHistorialPdf(string $id)
+    {
+        $trabajador = Personal::find($id);
+
+        if (!$trabajador) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Trabajador no encontrado',
+            ], 404);
+        }
+
+        $salidas = \App\Models\SalidaCabecera::where('personal_id', $trabajador->id)
+            ->with(['salidasDetalle.producto.unidadMedida'])
+            ->latest()
+            ->get();
+
+        $resumen = [];
+        foreach ($salidas as $sal) {
+            foreach ($sal->salidasDetalle as $det) {
+                $prodId = $det->producto_id;
+                if (!isset($resumen[$prodId])) {
+                    $resumen[$prodId] = [
+                        'producto_id' => $prodId,
+                        'sku' => $det->producto->sku ?? 'N/A',
+                        'producto' => $det->producto->nombre ?? 'Producto',
+                        'unidad' => $det->producto->unidadMedida->nombre ?? $det->producto->unidad_medida ?? 'UND',
+                        'cantidad_total' => 0,
+                    ];
+                }
+                $resumen[$prodId]['cantidad_total'] += (float) $det->cantidad;
+            }
+        }
+
+        $resumenAcumulado = array_values($resumen);
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.custodia_personal', compact('trabajador', 'salidas', 'resumenAcumulado'))
+            ->setPaper('a4', 'portrait');
+
+        return $pdf->stream("Custodia_{$trabajador->dni}_{$trabajador->apellidos}.pdf");
+    }
 }

@@ -7,6 +7,7 @@ use App\Models\Kardex;
 use App\Models\Producto;
 use App\Models\SalidaCabecera;
 use App\Models\SalidaDetalle;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -33,16 +34,13 @@ class SalidaController extends Controller
     }
 
     /**
-     * Registrar una nueva Nota de Salida (NS) con validación estricta de stock y asignación a personal.
+     * Registrar una nueva Nota de Salida (NS) con asignación automática de fecha, área y control por almacén.
      */
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
+            'almacen_id' => 'nullable|exists:almacenes,id',
             'personal_id' => 'required|exists:personal,id',
-            'destino_cliente' => 'nullable|string|max:255',
-            'tipo_salida' => 'required|string|max:100',
-            'numero_referencia' => 'nullable|string|max:100',
-            'fecha_emision' => 'required|date',
             'observaciones' => 'nullable|string',
             'detalles' => 'required|array|min:1',
             'detalles.*.producto_id' => 'required|exists:productos,id',
@@ -52,35 +50,51 @@ class SalidaController extends Controller
 
         try {
             $cabecera = DB::transaction(function () use ($validated) {
-                // 1. VALIDACIÓN PREVIA DE STOCK EN BASE DE DATOS CON LOCK FOR UPDATE
+                $almacenId = (int) ($validated['almacen_id'] ?? 1);
+
+                // Obtener trabajador seleccionado para recuperar automáticamente su área
+                $personal = \App\Models\Personal::findOrFail($validated['personal_id']);
+                $areaTrabajador = !empty($personal->area) ? $personal->area : 'General';
+                $fechaEmisionAuto = now();
+                $destinoAuto = "Asignación a " . $areaTrabajador;
+                $tipoSalidaAuto = 'Asignación a Personal';
+
+                // 1. VALIDACIÓN PREVIA DE STOCK POR ALMACÉN EN BASE DE DATOS
                 foreach ($validated['detalles'] as $item) {
                     $producto = Producto::where('id', $item['producto_id'])
                         ->lockForUpdate()
                         ->first();
 
-                    $stockDisponible = (float) $producto->stock_actual;
+                    $pivot = DB::table('almacen_producto')
+                        ->where('almacen_id', $almacenId)
+                        ->where('producto_id', $item['producto_id'])
+                        ->first();
+
+                    $stockDisponibleAlm = $pivot ? (float) $pivot->stock : 0;
                     $cantidadSolicitada = (float) $item['cantidad'];
 
-                    if ($stockDisponible < $cantidadSolicitada) {
+                    if ($stockDisponibleAlm < $cantidadSolicitada) {
+                        $almNombre = DB::table('almacenes')->where('id', $almacenId)->value('nombre') ?? 'Almacén';
                         throw new \Exception(
-                            "Stock insuficiente para el producto '{$producto->nombre}'. " .
-                            "Stock disponible actual: {$stockDisponible}, Cantidad requerida: {$cantidadSolicitada}"
+                            "Stock insuficiente en '{$almNombre}' para el producto '{$producto->nombre}'. " .
+                            "Stock disponible en este almacén: {$stockDisponibleAlm} u., Cantidad requerida: {$cantidadSolicitada} u."
                         );
                     }
                 }
 
-                // 2. Crear cabecera de salida asignada al trabajador (personal_id)
+                // 2. Crear cabecera de salida asignada al trabajador con área y fecha automáticas
                 $cabecera = SalidaCabecera::create([
-                    'personal_id' => $validated['personal_id'],
-                    'destino_cliente' => $validated['destino_cliente'] ?? 'Uso Interno / Personal',
-                    'tipo_salida' => $validated['tipo_salida'],
-                    'numero_referencia' => $validated['numero_referencia'] ?? null,
-                    'fecha_emision' => $validated['fecha_emision'],
+                    'almacen_id' => $almacenId,
+                    'personal_id' => $personal->id,
+                    'destino_cliente' => $destinoAuto,
+                    'tipo_salida' => $tipoSalidaAuto,
+                    'numero_referencia' => null,
+                    'fecha_emision' => $fechaEmisionAuto,
                     'observaciones' => $validated['observaciones'] ?? null,
                     'estado' => 'emitido',
                 ]);
 
-                // 3. Registrar detalles y descontar stock automáticamente
+                // 3. Registrar detalles y descontar stock por almacén automáticamente
                 foreach ($validated['detalles'] as $item) {
                     $producto = Producto::where('id', $item['producto_id'])->first();
                     $cantidad = (float) $item['cantidad'];
@@ -95,26 +109,42 @@ class SalidaController extends Controller
                         'precio_total' => $costoTotal,
                     ]);
 
-                    $stockAnterior = (float) $producto->stock_actual;
-                    $stockNuevo = $stockAnterior - $cantidad;
+                    $pivot = DB::table('almacen_producto')
+                        ->where('almacen_id', $almacenId)
+                        ->where('producto_id', $item['producto_id'])
+                        ->first();
 
-                    // Descontar del stock actual
+                    $stockAnteriorAlm = $pivot ? (float) $pivot->stock : 0;
+                    $stockNuevoAlm = max(0, $stockAnteriorAlm - $cantidad);
+
+                    if ($pivot) {
+                        DB::table('almacen_producto')
+                            ->where('id', $pivot->id)
+                            ->update([
+                                'stock' => $stockNuevoAlm,
+                                'updated_at' => now(),
+                            ]);
+                    }
+
+                    // Actualizar el stock total sumando la existencia de todos los almacenes
+                    $stockTotalGlobal = (float) DB::table('almacen_producto')->where('producto_id', $producto->id)->sum('stock');
                     $producto->update([
-                        'stock_actual' => $stockNuevo,
+                        'stock_actual' => $stockTotalGlobal,
                     ]);
 
-                    // Registrar en Kardex auditoría
+                    // Registrar en Kardex auditoría con la fecha auto-generada
                     Kardex::create([
+                        'almacen_id' => $almacenId,
                         'producto_id' => $producto->id,
-                        'fecha_hora' => $validated['fecha_emision'],
+                        'fecha_hora' => $fechaEmisionAuto,
                         'tipo_operacion' => 'SALIDA',
                         'documento_referencia_id' => $cabecera->id,
-                        'stock_anterior' => $stockAnterior,
+                        'stock_anterior' => $stockAnteriorAlm,
                         'cantidad_movimiento' => $cantidad,
-                        'stock_actual' => $stockNuevo,
+                        'stock_actual' => $stockNuevoAlm,
                         'costo_unitario' => $costoUnitario,
                         'costo_total_movimiento' => $costoTotal,
-                        'saldo_valorizado_total' => $stockNuevo * (float) $producto->costo_unitario,
+                        'saldo_valorizado_total' => $stockNuevoAlm * (float) $producto->costo_unitario,
                     ]);
                 }
 
@@ -156,5 +186,28 @@ class SalidaController extends Controller
             'status' => 'success',
             'data' => $salida,
         ], 200);
+    }
+
+    /**
+     * Generar y descargar/visualizar la Nota de Salida / Asignación a Personal en PDF.
+     */
+    public function exportPdf(string $id)
+    {
+        $salida = SalidaCabecera::with([
+            'personal',
+            'salidasDetalle.producto.unidadMedida',
+        ])->find($id);
+
+        if (!$salida) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Nota de salida no encontrada',
+            ], 404);
+        }
+
+        $pdf = Pdf::loadView('pdf.nota_salida', compact('salida'))
+            ->setPaper('a4', 'portrait');
+
+        return $pdf->stream("NotaSalida_{$salida->id}.pdf");
     }
 }
