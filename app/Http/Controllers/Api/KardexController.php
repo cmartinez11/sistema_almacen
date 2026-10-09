@@ -27,10 +27,12 @@ class KardexController extends Controller
             ], 404);
         }
 
-        $almacenId = $request->input('almacen_id');
+        $almacenId = $request->input('almacen_id')
+            ?? $request->header('X-Almacen-Id')
+            ?? $request->attributes->get('active_almacen_id');
 
-        // Buscar movimientos registrados en la tabla 'kardex'
-        $queryKardex = Kardex::where('producto_id', $producto->id);
+        // Buscar movimientos registrados en la tabla 'kardex' con la relación de almacén
+        $queryKardex = Kardex::with('almacen')->where('producto_id', $producto->id);
         if ($almacenId) {
             $queryKardex->where('almacen_id', $almacenId);
         }
@@ -44,27 +46,35 @@ class KardexController extends Controller
 
         if ($movimientosKardex->count() > 0) {
             foreach ($movimientosKardex as $k) {
-                $esEntrada = strtoupper($k->tipo_operacion) === 'ENTRADA';
+                $tipoOp = strtoupper($k->tipo_operacion);
+                $esEntrada = in_array($tipoOp, ['ENTRADA', 'TRANSFERENCIA_ENTRADA', 'INGRESO']);
                 $cantMov = (float) $k->cantidad_movimiento;
 
                 $docSustento = 'S/D';
                 $observacion = '';
 
-                if ($esEntrada) {
+                if (str_contains($tipoOp, 'TRANSFERENCIA')) {
+                    $transf = \App\Models\Transferencia::with(['almacenOrigen', 'almacenDestino'])->find($k->documento_referencia_id);
+                    if ($transf) {
+                        $docSustento = $transf->correlativo;
+                        if ($esEntrada) {
+                            $observacion = "Transferencia recibida desde " . ($transf->almacenOrigen->nombre ?? 'Almacén Origen');
+                        } else {
+                            $observacion = "Transferencia enviada a " . ($transf->almacenDestino->nombre ?? 'Almacén Destino');
+                        }
+                    } else {
+                        $docSustento = "TR-{$k->documento_referencia_id}";
+                        $observacion = $esEntrada ? "Transferencia de Ingreso" : "Transferencia de Salida";
+                    }
+                } elseif ($esEntrada) {
                     $cabecera = EntradaCabecera::with('proveedor')->find($k->documento_referencia_id);
                     if ($cabecera) {
                         $docSustento = $cabecera->correlativo ?? ($cabecera->numero_comprobante ? 'NI-'.$cabecera->numero_comprobante : 'NI-'.$cabecera->id);
                         $prov = $cabecera->proveedor->razon_social ?? 'Proveedor';
                         $observacion = "Ingreso por compra / recepción ({$prov})";
                     } else {
-                        $transf = \App\Models\Transferencia::with(['almacenOrigen', 'almacenDestino'])->find($k->documento_referencia_id);
-                        if ($transf) {
-                            $docSustento = $transf->correlativo;
-                            $observacion = "Transferencia recibida desde " . ($transf->almacenOrigen->nombre ?? 'Almacén');
-                        } else {
-                            $docSustento = "NI-{$k->documento_referencia_id}";
-                            $observacion = "Ingreso de Almacén";
-                        }
+                        $docSustento = "NI-{$k->documento_referencia_id}";
+                        $observacion = "Ingreso de Almacén";
                     }
                 } else {
                     $cabecera = SalidaCabecera::with('personal')->find($k->documento_referencia_id);
@@ -74,20 +84,15 @@ class KardexController extends Controller
                         $dest = $cabecera->destino_cliente ?? 'Asignación Interna';
                         $observacion = "Despachado a {$pers} ({$dest})";
                     } else {
-                        $transf = \App\Models\Transferencia::with(['almacenOrigen', 'almacenDestino'])->find($k->documento_referencia_id);
-                        if ($transf) {
-                            $docSustento = $transf->correlativo;
-                            $observacion = "Transferencia enviada a " . ($transf->almacenDestino->nombre ?? 'Almacén');
-                        } else {
-                            $docSustento = "NS-{$k->documento_referencia_id}";
-                            $observacion = "Salida a Personal";
-                        }
+                        $docSustento = "NS-{$k->documento_referencia_id}";
+                        $observacion = "Salida a Personal";
                     }
                 }
 
                 $movimientos[] = [
                     'id' => $k->id,
                     'almacen_id' => $k->almacen_id,
+                    'almacen' => $k->almacen ? ['id' => $k->almacen->id, 'nombre' => $k->almacen->nombre] : null,
                     'fecha' => \Carbon\Carbon::parse($k->fecha_hora)->format('Y-m-d H:i'),
                     'tipo' => strtoupper($k->tipo_operacion),
                     'doc' => $docSustento,

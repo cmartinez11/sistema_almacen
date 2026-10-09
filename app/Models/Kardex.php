@@ -15,6 +15,7 @@ class Kardex extends Model
     public $timestamps = true;
 
     protected $fillable = [
+        'almacen_id',
         'producto_id',
         'fecha_hora',
         'tipo_operacion',
@@ -43,5 +44,10 @@ class Kardex extends Model
     public function producto(): BelongsTo
     {
         return $this->belongsTo(Producto::class, 'producto_id');
+    }
+
+    public function almacen(): BelongsTo
+    {
+        return $this->belongsTo(Almacen::class, 'almacen_id');
     }
 }

@@ -197,11 +197,11 @@ export default function KardexFisicoPage() {
                     </span>
                   </td>
                   <td>
-                    {row.tipo === 'ENTRADA' || row.tipo === 'INGRESO' ? (
+                    {row.tipo?.includes('ENTRADA') || row.tipo === 'INGRESO' ? (
                       <span className="badge badge-success" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                         <ArrowDownLeft size={12} /> ENTRADA
                       </span>
-                    ) : row.tipo === 'SALIDA' ? (
+                    ) : row.tipo?.includes('SALIDA') ? (
                       <span className="badge badge-danger" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                         <ArrowUpRight size={12} /> SALIDA
                       </span>
