@@ -199,6 +199,17 @@ class KardexController extends Controller
             }
         }
 
+        $canViewPrices = $this->userCanViewFinancials($request);
+        if (!$canViewPrices) {
+            $costoFiltrado = null;
+            foreach ($movimientos as &$m) {
+                $m['costo_unitario'] = null;
+                $m['costo_total_movimiento'] = null;
+                $m['saldo_valorizado'] = null;
+            }
+            unset($m);
+        }
+
         return response()->json([
             'status' => 'success',
             'data' => [
@@ -208,7 +219,7 @@ class KardexController extends Controller
                     'nombre' => $producto->nombre,
                     'stock_actual' => $stockFiltrado,
                     'costo_unitario' => $costoFiltrado,
-                    'valor_total' => $stockFiltrado * $costoFiltrado,
+                    'valor_total' => $costoFiltrado !== null ? ($stockFiltrado * $costoFiltrado) : null,
                     'categoria' => $producto->categoria->nombre ?? 'General',
                     'unidad_medida' => $producto->unidadMedida->nombre ?? 'UND',
                 ],
@@ -222,6 +233,13 @@ class KardexController extends Controller
      */
     public function getValorizadoResumen(\Illuminate\Http\Request $request): JsonResponse
     {
+        if (!$this->userCanViewFinancials($request)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Acceso denegado: El Kardex Valorizado y costos contables están reservados exclusivamente para los roles de Administración y Compras.',
+            ], 403);
+        }
+
         $almacenId = $request->input('almacen_id');
 
         $productos = Producto::with(['categoria', 'unidadMedida', 'almacenes'])->get();
@@ -270,5 +288,114 @@ class KardexController extends Controller
                 'productos' => $resumen,
             ],
         ], 200);
+    }
+
+    /**
+     * Exportar reporte de Kardex Valorizado compatible con Excel y SUNAT (CSV estructurado con UTF-8 BOM).
+     */
+    public function exportValorizadoCsv(\Illuminate\Http\Request $request)
+    {
+        if (!$this->userCanViewFinancials($request)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Acceso denegado: No tiene autorización para exportar datos financieros de valorización.',
+            ], 403);
+        }
+
+        $almacenId = $request->input('almacen_id');
+        $almacen = $almacenId ? \App\Models\Almacen::find($almacenId) : null;
+        $nombreAlmacen = $almacen ? "{$almacen->nombre} ({$almacen->codigo})" : 'TODOS LOS ALMACENES (CONSOLIDADO)';
+
+        $productos = Producto::with(['categoria', 'unidadMedida', 'almacenes'])->get();
+
+        $almacenSlug = $almacen ? strtolower(preg_replace('/[^a-zA-Z0-9]/', '_', $almacen->codigo ?? $almacen->nombre)) . '_' : 'consolidado_';
+        $filename = "kardex_valorizado_{$almacenSlug}" . date('Ymd_His') . '.csv';
+
+        $headers = [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+            'Pragma' => 'no-cache',
+            'Cache-Control' => 'must-revalidate, post-check=0, pre-check=0',
+            'Expires' => '0',
+        ];
+
+        $callback = function () use ($productos, $almacenId, $nombreAlmacen) {
+            $handle = fopen('php://output', 'w');
+
+            // BOM UTF-8 para apertura directa y limpia en Microsoft Excel sin problemas de tildes
+            fputs($handle, "\xEF\xBB\xBF");
+
+            // Metadatos de cabecera contable
+            fputcsv($handle, ['SISTEMA DE GESTIÓN DE ALMACÉN - REPORTE DE KARDEX VALORIZADO'], ';');
+            fputcsv($handle, ['ALMACÉN / PLANTA:', $nombreAlmacen], ';');
+            fputcsv($handle, ['FECHA Y HORA DE EMISIÓN:', date('d/m/Y H:i:s')], ';');
+            fputcsv($handle, ['MÉTODO DE VALUACIÓN CONTABLE:', 'PROMEDIO PONDERADO (SUNAT FORMATO 13.1)'], ';');
+            fputcsv($handle, [], ';');
+
+            // Columnas del reporte
+            fputcsv($handle, [
+                'N°',
+                'CÓDIGO SKU',
+                'DESCRIPCIÓN DEL PRODUCTO',
+                'CATEGORÍA',
+                'UNIDAD DE MEDIDA',
+                'COSTO UNIT. PROM. (S/)',
+                'STOCK FÍSICO ACTUAL',
+                'VALOR TOTAL ACUMULADO (S/)',
+                'MÉTODO VALUACIÓN',
+            ], ';');
+
+            $i = 1;
+            $totalValorizado = 0;
+            $totalFisico = 0;
+
+            foreach ($productos as $p) {
+                $stock = (float) $p->stock_actual;
+                $costoUnitario = (float) $p->costo_unitario;
+
+                if ($almacenId) {
+                    $pivot = $p->almacenes->where('id', $almacenId)->first();
+                    if ($pivot && $pivot->pivot) {
+                        $stock = (float) $pivot->pivot->stock;
+                        $costoUnitario = (float) $pivot->pivot->costo_unitario;
+                    } else {
+                        $stock = 0;
+                    }
+                }
+
+                $valorTotalItem = $stock * $costoUnitario;
+                $totalValorizado += $valorTotalItem;
+                $totalFisico += $stock;
+
+                fputcsv($handle, [
+                    $i++,
+                    $p->sku,
+                    $p->nombre,
+                    $p->categoria->nombre ?? 'General',
+                    $p->unidadMedida->nombre ?? 'UND',
+                    number_format($costoUnitario, 4, '.', ''),
+                    number_format($stock, 2, '.', ''),
+                    number_format($valorTotalItem, 2, '.', ''),
+                    'Promedio Ponderado',
+                ], ';');
+            }
+
+            fputcsv($handle, [], ';');
+            fputcsv($handle, [
+                'TOTAL GENERAL',
+                '',
+                '',
+                '',
+                '',
+                '',
+                number_format($totalFisico, 2, '.', ''),
+                number_format($totalValorizado, 2, '.', ''),
+                '',
+            ], ';');
+
+            fclose($handle);
+        };
+
+        return response()->stream($callback, 200, $headers);
     }
 }

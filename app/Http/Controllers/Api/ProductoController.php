@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\EntradaDetalle;
 use App\Models\Producto;
+use App\Models\SalidaDetalle;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -41,6 +43,21 @@ class ProductoController extends Controller
 
         $perPage = (int) $request->input('per_page', 50);
         $productos = $query->latest('productos.created_at')->paginate($perPage);
+
+        if (!$this->userCanViewFinancials($request)) {
+            $productos->getCollection()->transform(function ($prod) {
+                $prod->costo_unitario = null;
+                $prod->ultimo_precio_compra = null;
+                if ($prod->relationLoaded('almacenes')) {
+                    foreach ($prod->almacenes as $alm) {
+                        if ($alm->pivot) {
+                            $alm->pivot->costo_unitario = null;
+                        }
+                    }
+                }
+                return $prod;
+            });
+        }
 
         return response()->json([
             'status' => 'success',
@@ -131,6 +148,18 @@ class ProductoController extends Controller
                 'status' => 'error',
                 'message' => 'Producto no encontrado',
             ], 404);
+        }
+
+        if (!$this->userCanViewFinancials($request)) {
+            $producto->costo_unitario = null;
+            $producto->ultimo_precio_compra = null;
+            if ($producto->relationLoaded('almacenes')) {
+                foreach ($producto->almacenes as $alm) {
+                    if ($alm->pivot) {
+                        $alm->pivot->costo_unitario = null;
+                    }
+                }
+            }
         }
 
         return response()->json([
@@ -278,6 +307,123 @@ class ProductoController extends Controller
             'status' => 'success',
             'data' => $criticos,
             'total_criticos' => count($criticos),
+        ], 200);
+    }
+
+    /**
+     * Obtener el historial estructurado de trazabilidad (entradas y salidas) para un producto.
+     */
+    public function movimientosHistorial(Request $request, string $id): JsonResponse
+    {
+        $request = $request ?: request();
+        $producto = Producto::with(['categoria', 'unidadMedida', 'almacenes'])->find($id);
+
+        if (!$producto) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Producto no encontrado',
+            ], 404);
+        }
+
+        // 1. Consultar Historial de Entradas (Compras / Recepciones)
+        $entradas = EntradaDetalle::where('producto_id', $producto->id)
+            ->with(['entradaCabecera.proveedor', 'entradaCabecera.personal'])
+            ->get()
+            ->sortByDesc(function ($d) {
+                return $d->entradaCabecera->fecha_emision ?? $d->created_at;
+            })
+            ->values()
+            ->map(function ($det) {
+                $cab = $det->entradaCabecera;
+                $nroDoc = $cab ? ($cab->numero_comprobante ?: 'NI-' . str_pad($cab->id, 5, '0', STR_PAD_LEFT)) : 'NI-S/N';
+                $fecha = $cab && $cab->fecha_emision ? $cab->fecha_emision->format('Y-m-d H:i') : $det->created_at->format('Y-m-d H:i');
+                $proveedor = $cab && $cab->proveedor ? $cab->proveedor->razon_social : ($cab && $cab->personal ? "Ingreso: {$cab->personal->nombres} {$cab->personal->apellidos}" : 'Proveedor General');
+                $ruc = $cab && $cab->proveedor ? $cab->proveedor->ruc : null;
+
+                $almacenNombre = null;
+                if ($cab && $cab->almacen_id) {
+                    $almacenNombre = \App\Models\Almacen::find($cab->almacen_id)?->nombre;
+                }
+
+                return [
+                    'id' => $det->id,
+                    'documento' => $nroDoc,
+                    'tipo_comprobante' => $cab->tipo_comprobante ?? 'Nota de Ingreso',
+                    'fecha' => $fecha,
+                    'cantidad' => (float) $det->cantidad,
+                    'costo_unitario' => (float) $det->costo_unitario,
+                    'costo_total' => (float) ($det->costo_total ?: ((float) $det->cantidad * (float) $det->costo_unitario)),
+                    'proveedor' => $proveedor,
+                    'proveedor_ruc' => $ruc,
+                    'almacen' => $almacenNombre,
+                    'observaciones' => $cab->observaciones ?? null,
+                ];
+            });
+
+        // 2. Consultar Historial de Salidas (Despachos a Personal / Obras)
+        $salidas = SalidaDetalle::where('producto_id', $producto->id)
+            ->with(['salidaCabecera.personal'])
+            ->get()
+            ->sortByDesc(function ($d) {
+                return $d->salidaCabecera->fecha_emision ?? $d->created_at;
+            })
+            ->values()
+            ->map(function ($det) {
+                $cab = $det->salidaCabecera;
+                $nroDoc = $cab ? ($cab->numero_referencia ?: 'NS-' . str_pad($cab->id, 5, '0', STR_PAD_LEFT)) : 'NS-S/N';
+                $fecha = $cab && $cab->fecha_emision ? $cab->fecha_emision->format('Y-m-d H:i') : $det->created_at->format('Y-m-d H:i');
+                $trabajador = $cab && $cab->personal ? "{$cab->personal->nombres} {$cab->personal->apellidos}" : 'Personal / Operador';
+                $cargo = $cab && $cab->personal ? $cab->personal->cargo : null;
+                $destino = $cab ? ($cab->destino_cliente ?: 'Asignación Interna') : 'General';
+
+                $almacenNombre = null;
+                if ($cab && $cab->almacen_id) {
+                    $almacenNombre = \App\Models\Almacen::find($cab->almacen_id)?->nombre;
+                }
+
+                return [
+                    'id' => $det->id,
+                    'documento' => $nroDoc,
+                    'fecha' => $fecha,
+                    'cantidad' => (float) $det->cantidad,
+                    'trabajador' => $trabajador,
+                    'cargo' => $cargo,
+                    'destino' => $destino,
+                    'almacen' => $almacenNombre,
+                    'observaciones' => $cab->observaciones ?? null,
+                ];
+            });
+
+        $totalIngresado = $entradas->sum('cantidad');
+        $totalDespachado = $salidas->sum('cantidad');
+
+        $canViewPrices = $this->userCanViewFinancials($request);
+        if (!$canViewPrices) {
+            $entradas = $entradas->map(function ($ent) {
+                $ent['costo_unitario'] = null;
+                $ent['costo_total'] = null;
+                return $ent;
+            });
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'producto' => [
+                    'id' => $producto->id,
+                    'sku' => $producto->sku,
+                    'nombre' => $producto->nombre,
+                    'categoria' => $producto->categoria->nombre ?? 'General',
+                    'unidad_medida' => $producto->unidadMedida->nombre ?? 'UND',
+                    'stock_actual' => (float) $producto->stock_actual,
+                    'stock_minimo' => (float) $producto->stock_minimo,
+                    'ultimo_precio_compra' => $canViewPrices ? (float) ($producto->ultimo_precio_compra ?? $producto->costo_unitario ?? 0) : null,
+                    'total_ingresado' => $totalIngresado,
+                    'total_despachado' => $totalDespachado,
+                ],
+                'entradas' => $entradas,
+                'salidas' => $salidas,
+            ],
         ], 200);
     }
 }

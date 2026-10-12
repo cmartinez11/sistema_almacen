@@ -62,6 +62,7 @@ function App() {
             <ProtectedRoute
               allowedRoles={[
                 ROLES.ADMINISTRADOR,
+                ROLES.COMPRAS,
                 ROLES.ALMACENERO,
                 ROLES.SUPERVISOR,
                 ROLES.GERENCIA,
@@ -77,7 +78,15 @@ function App() {
         <Route
           path="/productos/categorias"
           element={
-            <ProtectedRoute allowedRoles={[ROLES.ADMINISTRADOR, ROLES.ALMACENERO]}>
+            <ProtectedRoute
+              allowedRoles={[
+                ROLES.ADMINISTRADOR,
+                ROLES.COMPRAS,
+                ROLES.ALMACENERO,
+                ROLES.SUPERVISOR,
+                ROLES.GERENCIA,
+              ]}
+            >
               <MainLayout>
                 <CategoriasPage />
               </MainLayout>
@@ -88,7 +97,15 @@ function App() {
         <Route
           path="/productos/unidades"
           element={
-            <ProtectedRoute allowedRoles={[ROLES.ADMINISTRADOR, ROLES.ALMACENERO]}>
+            <ProtectedRoute
+              allowedRoles={[
+                ROLES.ADMINISTRADOR,
+                ROLES.COMPRAS,
+                ROLES.ALMACENERO,
+                ROLES.SUPERVISOR,
+                ROLES.GERENCIA,
+              ]}
+            >
               <MainLayout>
                 <UnidadesMedidaPage />
               </MainLayout>
@@ -231,7 +248,7 @@ function App() {
           path="/reportes/kardex-valorizado"
           element={
             <ProtectedRoute
-              allowedRoles={[ROLES.ADMINISTRADOR, ROLES.ALMACENERO, ROLES.GERENCIA]}
+              allowedRoles={[ROLES.ADMINISTRADOR, ROLES.COMPRAS, ROLES.GERENCIA]}
             >
               <MainLayout>
                 <KardexValorizadoPage />

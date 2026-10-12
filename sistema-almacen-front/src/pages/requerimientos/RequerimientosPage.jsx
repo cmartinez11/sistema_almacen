@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, ClipboardList, CheckCircle2, XCircle, Clock, X, Check, Trash2, Search, Warehouse, UserCheck, Eye, FileDown, ShoppingCart, DollarSign, Truck } from 'lucide-react';
-import { normalizeRole, ROLES } from '../../config/rbacConfig';
+import { Plus, CheckCircle2, XCircle, Clock, X, Check, Trash2, Warehouse, UserCheck, Eye, FileDown, ShoppingCart, Truck } from 'lucide-react';
+import { normalizeRole, ROLES, canViewFinancials, useRole } from '../../config/rbacConfig';
 import api from '../../services/api';
 import '../pagesCommon.css';
 
 export default function RequerimientosPage() {
-  const user = JSON.parse(localStorage.getItem('user') || '{}');
-  const role = normalizeRole(user);
+  const { user, role, canViewPrices: userCanViewPrices } = useRole();
 
   const [requerimientos, setRequerimientos] = useState([]);
   const [proveedoresList, setProveedoresList] = useState([]);
@@ -32,6 +31,12 @@ export default function RequerimientosPage() {
   // Modal de Gestión de Saldos Pendientes (Compras)
   const [showSaldoModal, setShowSaldoModal] = useState(false);
   const [saldoReq, setSaldoReq] = useState(null);
+
+  // Modal de Re-cotización de Saldos Pendientes (Nuevo Proveedor / Complementaria)
+  const [showRecotizarModal, setShowRecotizarModal] = useState(false);
+  const [recotizarReq, setRecotizarReq] = useState(null);
+  const [recotizarProveedorId, setRecotizarProveedorId] = useState('');
+  const [recotizarDetalles, setRecotizarDetalles] = useState([]);
 
   // Formulario cabecera (crear solicitud sin precios)
   const [formHeader, setFormHeader] = useState({
@@ -229,14 +234,25 @@ export default function RequerimientosPage() {
   const handleOpenCotizarModal = (req) => {
     setCotizarReq(req);
     setCotizarProveedorId(req.proveedor_id || proveedoresList[0]?.id || '');
-    const items = (req.detalles || req.requerimiento_detalles || []).map((d) => ({
-      id: d.id,
-      producto_id: d.producto_id,
-      producto_nombre: d.producto?.nombre || 'Producto',
-      producto_sku: d.producto?.sku || 'SKU',
-      cantidad_solicitada: d.cantidad_solicitada || 1,
-      costo_unitario: Number(d.costo_unitario || d.producto?.costo_unitario || 0),
-    }));
+    const items = (req.detalles || req.requerimiento_detalles || []).map((d) => {
+      const prodInList = productosList.find((p) => p.id === d.producto_id);
+      const ultimoPrecio = Number(
+        d.producto?.ultimo_precio_compra ??
+        prodInList?.ultimo_precio_compra ??
+        d.producto?.costo_unitario ??
+        prodInList?.costo_unitario ??
+        0
+      );
+      return {
+        id: d.id,
+        producto_id: d.producto_id,
+        producto_nombre: d.producto?.nombre || prodInList?.nombre || 'Producto',
+        producto_sku: d.producto?.sku || prodInList?.sku || 'SKU',
+        cantidad_solicitada: d.cantidad_solicitada || 1,
+        costo_unitario: Number(d.costo_unitario || ultimoPrecio || 0),
+        ultimo_precio_compra: ultimoPrecio,
+      };
+    });
     setCotizarDetalles(items);
     setShowCotizarModal(true);
   };
@@ -288,21 +304,97 @@ export default function RequerimientosPage() {
     setShowSaldoModal(true);
   };
 
-  const handleCerrarFaltante = async (id) => {
-    if (!window.confirm('¿Está seguro de cerrar y descartar el saldo pendiente de esta Orden de Compra? Las unidades faltantes ya no se esperarán y la orden quedará CERRADA.')) {
+  const handleOpenRecotizarModal = (req) => {
+    setRecotizarReq(req);
+    setRecotizarProveedorId(req.proveedor_id || proveedoresList[0]?.id || '');
+    const items = (req.detalles || req.requerimiento_detalles || [])
+      .map((d) => {
+        const prodInList = productosList.find((p) => p.id === d.producto_id);
+        const sol = Number(d.cantidad_solicitada || 0);
+        const rec = Number(d.cantidad_recibida !== undefined ? d.cantidad_recibida : 0);
+        const pend = Number(d.cantidad_pendiente !== undefined ? d.cantidad_pendiente : Math.max(0, sol - rec));
+        const ultimoPrecio = Number(
+          d.producto?.ultimo_precio_compra ??
+          prodInList?.ultimo_precio_compra ??
+          d.producto?.costo_unitario ??
+          prodInList?.costo_unitario ??
+          0
+        );
+        return {
+          id: d.id,
+          producto_id: d.producto_id,
+          producto_nombre: d.producto?.nombre || prodInList?.nombre || 'Producto',
+          producto_sku: d.producto?.sku || prodInList?.sku || 'SKU',
+          cantidad_solicitada: pend > 0 ? pend : sol,
+          cantidad_recibida: rec,
+          cantidad_pendiente: pend,
+          costo_unitario: Number(d.costo_unitario || ultimoPrecio || 0),
+          ultimo_precio_compra: ultimoPrecio,
+        };
+      })
+      .filter((item) => item.cantidad_pendiente > 0);
+
+    setRecotizarDetalles(items);
+    setShowRecotizarModal(true);
+  };
+
+  const handleRecotizarChange = (index, field, value) => {
+    const updated = [...recotizarDetalles];
+    updated[index][field] = value;
+    setRecotizarDetalles(updated);
+  };
+
+  const handleRemoveRecotizarRow = (index) => {
+    setRecotizarDetalles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const calculateRecotizacionTotal = () => {
+    return recotizarDetalles.reduce(
+      (sum, item) => sum + Number(item.cantidad_solicitada) * Number(item.costo_unitario),
+      0
+    );
+  };
+
+  const handleSubmitRecotizacion = async (e) => {
+    e.preventDefault();
+    if (recotizarDetalles.length === 0) {
+      alert('Debe conservar al menos un ítem para emitir la Orden de Compra Complementaria.');
       return;
     }
     try {
-      await api.put(`/requerimientos/${id}/cerrar-faltante`);
-      setShowSaldoModal(false);
+      const payload = {
+        proveedor_id: recotizarProveedorId,
+        detalles: recotizarDetalles.map((d) => ({
+          producto_id: d.producto_id,
+          cantidad_solicitada: Number(d.cantidad_solicitada),
+          costo_unitario: Number(d.costo_unitario),
+        })),
+      };
+
+      await api.put(`/requerimientos/${recotizarReq.id}/recotizar-saldo`, payload);
+      setShowRecotizarModal(false);
       loadData();
     } catch (err) {
-      console.warn(err);
-      setRequerimientos((prev) =>
-        prev.map((r) => (r.id === id ? { ...r, estado: 'cerrado' } : r))
-      );
-      setShowSaldoModal(false);
+      console.error(err);
+      alert('Error al emitir la Orden de Compra Complementaria.');
     }
+  };
+
+  const handleAnularSaldo = async (id) => {
+    if (!window.confirm('¿Está seguro de anular el saldo pendiente de este requerimiento? El estado pasará a PARCIAL ANULADO y se registrará en el historial de la bandeja general para mantener la trazabilidad.')) {
+      return;
+    }
+    try {
+      await api.put(`/requerimientos/${id}/anular-saldo`);
+      loadData();
+    } catch (err) {
+      console.error(err);
+      alert('Error al anular el saldo pendiente.');
+    }
+  };
+
+  const handleCerrarFaltante = async (id) => {
+    return handleAnularSaldo(id);
   };
 
   const handleExportPdf = (req) => {
@@ -346,7 +438,7 @@ export default function RequerimientosPage() {
         </button>
       </div>
 
-      <div style={{ display: 'flex', gap: '10px', borderBottom: '2px solid #e2e8f0' }}>
+      <div style={{ display: 'flex', gap: '10px', borderBottom: '2px solid #e2e8f0', marginBottom: '16px' }}>
         <button
           onClick={() => setActiveTab('bandeja')}
           style={{
@@ -376,21 +468,6 @@ export default function RequerimientosPage() {
           }}
         >
           ⚠️ Saldos & Faltantes Parciales
-        </button>
-        <button
-          onClick={() => setActiveTab('mis-solicitudes')}
-          style={{
-            padding: '10px 18px',
-            border: 'none',
-            background: 'none',
-            fontSize: '14px',
-            fontWeight: '600',
-            cursor: 'pointer',
-            borderBottom: activeTab === 'mis-solicitudes' ? '3px solid #2563eb' : '3px solid transparent',
-            color: activeTab === 'mis-solicitudes' ? '#2563eb' : '#64748b',
-          }}
-        >
-          📄 Histórico de Requerimientos
         </button>
       </div>
 
@@ -449,13 +526,27 @@ export default function RequerimientosPage() {
                           : new Date().toLocaleDateString('es-PE')}
                       </td>
                       <td>
-                        <button
-                          className="secondary-btn"
-                          onClick={() => handleOpenItemsModal(req)}
-                          style={{ padding: '5px 12px', fontSize: '12.5px', background: '#eff6ff', color: '#2563eb', borderColor: '#bfdbfe' }}
-                        >
-                          <Eye size={14} /> Ver [{totalItemsCount}] ítems
-                        </button>
+                        {activeTab === 'saldos' ? (
+                          <button
+                            className="secondary-btn"
+                            onClick={() => handleOpenItemsModal(req)}
+                            style={{ padding: '5px 12px', fontSize: '12.5px', background: '#fefce8', color: '#854d0e', borderColor: '#fef08a' }}
+                          >
+                            <Eye size={14} /> Ver remanente [{
+                              (req.detalles || req.requerimiento_detalles || []).filter(
+                                (d) => Number(d.cantidad_pendiente !== undefined ? d.cantidad_pendiente : (Number(d.cantidad_solicitada) - Number(d.cantidad_recibida || 0))) > 0
+                              ).length
+                            }] ítems
+                          </button>
+                        ) : (
+                          <button
+                            className="secondary-btn"
+                            onClick={() => handleOpenItemsModal(req)}
+                            style={{ padding: '5px 12px', fontSize: '12.5px', background: '#eff6ff', color: '#2563eb', borderColor: '#bfdbfe' }}
+                          >
+                            <Eye size={14} /> Ver [{totalItemsCount}] ítems
+                          </button>
+                        )}
                       </td>
                       <td>
                         {req.prioridad === 'alta' && <span className="badge badge-danger">ALTA</span>}
@@ -481,6 +572,11 @@ export default function RequerimientosPage() {
                         {req.estado === 'parcial' && (
                           <span className="badge badge-warning" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#fef3c7', color: '#a16207' }}>
                             <Clock size={12} /> PARCIAL (FALTANTE)
+                          </span>
+                        )}
+                        {req.estado === 'parcial_anulado' && (
+                          <span className="badge badge-danger" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5' }}>
+                            <XCircle size={12} /> PARCIAL ANULADO
                           </span>
                         )}
                         {req.estado === 'cerrado' && (
@@ -538,18 +634,28 @@ export default function RequerimientosPage() {
                             </>
                           )}
 
-                          {/* 3. ESTADO PARCIAL: Mostrar botón [Gestionar Saldo] */}
+                          {/* 3. ESTADO PARCIAL: Botones [Re-cotizar / Nuevo Proveedor] y [Anular Saldo] */}
                           {req.estado === 'parcial' && (
                             <>
                               {(role === ROLES.COMPRAS || role === ROLES.ADMINISTRADOR) && (
-                                <button
-                                  className="primary-btn"
-                                  onClick={() => handleOpenSaldoModal(req)}
-                                  style={{ padding: '5px 10px', fontSize: '12px', background: '#ca8a04', borderColor: '#ca8a04' }}
-                                  title="Gestionar Saldo y Faltante Pendiente"
-                                >
-                                  ⚠️ Gestionar Saldo
-                                </button>
+                                <>
+                                  <button
+                                    className="primary-btn"
+                                    onClick={() => handleOpenRecotizarModal(req)}
+                                    style={{ padding: '5px 10px', fontSize: '12px', background: '#2563eb', borderColor: '#2563eb' }}
+                                    title="Re-cotizar saldo pendiente con nuevo proveedor"
+                                  >
+                                    <ShoppingCart size={14} /> Re-cotizar / Nuevo Proveedor
+                                  </button>
+                                  <button
+                                    className="secondary-btn"
+                                    onClick={() => handleAnularSaldo(req.id)}
+                                    style={{ padding: '5px 10px', fontSize: '12px', color: '#dc2626', borderColor: '#fca5a5' }}
+                                    title="Anular saldo faltante si ya no se va a adquirir"
+                                  >
+                                    <XCircle size={14} /> Anular Saldo
+                                  </button>
+                                </>
                               )}
                             </>
                           )}
@@ -714,7 +820,7 @@ export default function RequerimientosPage() {
       {/* MODAL 2: COTIZAR Y EMITIR ORDEN DE COMPRA (COMPRAS / ADMIN) */}
       {showCotizarModal && cotizarReq && (
         <div className="modal-overlay">
-          <div className="modal-card" style={{ maxWidth: '800px' }}>
+          <div className="modal-card" style={{ maxWidth: '860px' }}>
             <div className="modal-header" style={{ background: '#f0fdf4', borderBottom: '1px solid #bbf7d0' }}>
               <div>
                 <h3 style={{ margin: 0, color: '#166534', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -754,7 +860,7 @@ export default function RequerimientosPage() {
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {cotizarDetalles.map((row, idx) => (
-                    <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1.2fr 1fr', gap: '12px', alignItems: 'center', background: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                    <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1.8fr 0.9fr 1.6fr 1.1fr', gap: '12px', alignItems: 'center', background: '#f8fafc', padding: '12px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                       <div>
                         <strong style={{ fontSize: '12px', color: '#2563eb', fontFamily: 'monospace', display: 'block' }}>
                           {row.producto_sku}
@@ -776,7 +882,22 @@ export default function RequerimientosPage() {
                       </div>
 
                       <div>
-                        <label style={{ fontSize: '11px', color: '#64748b' }}>Costo Unit. (S/)</label>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '4px', flexWrap: 'wrap', gap: '4px' }}>
+                          <label style={{ fontSize: '11px', color: '#64748b', margin: 0 }}>Costo Unit. (S/)</label>
+                          <span
+                            style={{
+                              fontSize: '11px',
+                              fontWeight: '600',
+                              color: '#0284c7',
+                              background: '#e0f2fe',
+                              padding: '1px 6px',
+                              borderRadius: '4px',
+                            }}
+                            title="Último precio de compra registrado en notas de ingreso"
+                          >
+                            Últ. Compra: S/ {Number(row.ultimo_precio_compra || 0).toFixed(2)}
+                          </span>
+                        </div>
                         <input
                           type="number"
                           step="0.01"
@@ -786,10 +907,30 @@ export default function RequerimientosPage() {
                           value={row.costo_unitario}
                           onChange={(e) => handleCotizarChange(idx, 'costo_unitario', e.target.value)}
                         />
+                        {Number(row.ultimo_precio_compra) > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleCotizarChange(idx, 'costo_unitario', Number(row.ultimo_precio_compra).toFixed(2))}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              padding: '3px 0 0 0',
+                              fontSize: '11.5px',
+                              color: '#2563eb',
+                              cursor: 'pointer',
+                              textDecoration: 'underline',
+                              fontWeight: '500',
+                              display: 'inline-block',
+                            }}
+                            title="Copiar último precio de compra registrado"
+                          >
+                            ⚡ Usar último precio
+                          </button>
+                        )}
                       </div>
 
                       <div>
-                        <label style={{ fontSize: '11px', color: '#64748b' }}>Subtotal</label>
+                        <label style={{ fontSize: '11px', color: '#64748b' }}>Total x Prod.</label>
                         <strong style={{ display: 'block', padding: '8px', background: '#ffffff', borderRadius: '6px', fontSize: '13px', color: '#16a34a' }}>
                           S/ {(Number(row.cantidad_solicitada) * Number(row.costo_unitario)).toFixed(2)}
                         </strong>
@@ -820,10 +961,14 @@ export default function RequerimientosPage() {
       {/* MODAL 3: VISUALIZADOR DETALLADO DE ÍTEMS Y BOTÓN PDF */}
       {showItemsModal && selectedReq && (
         <div className="modal-overlay">
-          <div className="modal-card" style={{ maxWidth: '640px' }}>
+          <div className="modal-card" style={{ maxWidth: '720px' }}>
             <div className="modal-header">
               <div>
-                <h3 style={{ margin: 0 }}>Detalle de Ítems Solicitados</h3>
+                <h3 style={{ margin: 0 }}>
+                  {activeTab === 'saldos' || selectedReq.estado === 'parcial'
+                    ? 'Detalle de Remanente Pendiente por Recibir'
+                    : 'Detalle de Ítems Solicitados'}
+                </h3>
                 <span style={{ fontSize: '12px', color: '#2563eb', fontWeight: '700', fontFamily: 'monospace' }}>
                   {selectedReq.correlativo || `REQ-2026-00${selectedReq.id}`}
                 </span>
@@ -838,35 +983,81 @@ export default function RequerimientosPage() {
                 <div><strong>Fecha de Emisión:</strong> {selectedReq.fecha_solicitud ? new Date(selectedReq.fecha_solicitud).toLocaleString('es-PE') : '2026-10-06'}</div>
               </div>
 
-              <h4 style={{ margin: '12px 0 8px 0', fontSize: '14px', color: '#0f172a' }}>Lista de Productos:</h4>
+              <h4 style={{ margin: '12px 0 8px 0', fontSize: '14px', color: '#0f172a' }}>
+                {activeTab === 'saldos' ? 'Productos con Remanente Pendiente:' : 'Lista de Productos:'}
+              </h4>
 
               <table className="data-table">
                 <thead>
-                  <tr>
-                    <th>SKU</th>
-                    <th>Producto</th>
-                    <th>Cant. Solicitada</th>
-                    <th>Costo Unit. (S/)</th>
-                  </tr>
+                  {activeTab === 'saldos' ? (
+                    <tr>
+                      <th>SKU</th>
+                      <th>Producto</th>
+                      <th style={{ textAlign: 'center' }}>Cant. Original</th>
+                      <th style={{ textAlign: 'center' }}>Total Recibida</th>
+                      <th style={{ textAlign: 'center' }}>Remanente Pendiente</th>
+                    </tr>
+                  ) : (
+                    <tr>
+                      <th>SKU</th>
+                      <th>Producto</th>
+                      <th>Cant. Solicitada</th>
+                      <th>Costo Unit. (S/)</th>
+                    </tr>
+                  )}
                 </thead>
                 <tbody>
-                  {(selectedReq.detalles || selectedReq.requerimiento_detalles || []).map((d, index) => {
-                    const prodObj = d.producto || productosList.find((p) => p.id === d.producto_id) || {};
-                    return (
-                      <tr key={index}>
-                        <td><strong style={{ fontFamily: 'monospace', color: '#2563eb' }}>{prodObj.sku || 'SKU'}</strong></td>
-                        <td style={{ fontWeight: '600' }}>{prodObj.nombre || 'Producto General'}</td>
-                        <td>
-                          <span className="badge badge-info" style={{ fontSize: '13px', fontWeight: '700' }}>
-                            {d.cantidad_solicitada} u.
-                          </span>
-                        </td>
-                        <td>
-                          <strong>S/ {Number(d.costo_unitario || 0).toFixed(2)}</strong>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {(selectedReq.detalles || selectedReq.requerimiento_detalles || [])
+                    .filter((d) => {
+                      if (activeTab === 'saldos') {
+                        const sol = Number(d.cantidad_solicitada || 0);
+                        const rec = Number(d.cantidad_recibida !== undefined ? d.cantidad_recibida : 0);
+                        const pend = Number(d.cantidad_pendiente !== undefined ? d.cantidad_pendiente : Math.max(0, sol - rec));
+                        return pend > 0;
+                      }
+                      return true;
+                    })
+                    .map((d, index) => {
+                      const prodObj = d.producto || productosList.find((p) => p.id === d.producto_id) || {};
+                      const sol = Number(d.cantidad_solicitada || 0);
+                      const rec = Number(d.cantidad_recibida !== undefined ? d.cantidad_recibida : 0);
+                      const pend = Number(d.cantidad_pendiente !== undefined ? d.cantidad_pendiente : Math.max(0, sol - rec));
+
+                      if (activeTab === 'saldos') {
+                        return (
+                          <tr key={index}>
+                            <td><strong style={{ fontFamily: 'monospace', color: '#2563eb' }}>{prodObj.sku || 'SKU'}</strong></td>
+                            <td style={{ fontWeight: '600' }}>{prodObj.nombre || 'Producto General'}</td>
+                            <td style={{ textAlign: 'center', fontWeight: '600' }}>{sol} u.</td>
+                            <td style={{ textAlign: 'center', color: '#16a34a', fontWeight: '700' }}>{rec} u.</td>
+                            <td style={{ textAlign: 'center' }}>
+                              <strong style={{ color: '#dc2626', background: '#fef2f2', padding: '3px 8px', borderRadius: '6px', border: '1px solid #fca5a5' }}>
+                                {pend} u. Pendientes
+                              </strong>
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      return (
+                        <tr key={index}>
+                          <td><strong style={{ fontFamily: 'monospace', color: '#2563eb' }}>{prodObj.sku || 'SKU'}</strong></td>
+                          <td style={{ fontWeight: '600' }}>{prodObj.nombre || 'Producto General'}</td>
+                          <td>
+                            <span className="badge badge-info" style={{ fontSize: '13px', fontWeight: '700' }}>
+                              {d.cantidad_solicitada} u.
+                            </span>
+                          </td>
+                          <td>
+                            {userCanViewPrices && d.costo_unitario !== null ? (
+                              <strong>S/ {Number(d.costo_unitario || 0).toFixed(2)}</strong>
+                            ) : (
+                              <span style={{ color: '#94a3b8' }}>—</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             </div>
@@ -887,90 +1078,199 @@ export default function RequerimientosPage() {
         </div>
       )}
 
-      {/* MODAL 4: GESTIÓN DE SALDOS Y FALTANTES PARCIALES (ÁREA DE COMPRAS) */}
-      {showSaldoModal && saldoReq && (
+      {/* MODAL 4: RE-COTIZAR SALDO PENDIENTE (NUEVO PROVEEDOR / OC COMPLEMENTARIA) */}
+      {showRecotizarModal && recotizarReq && (
         <div className="modal-overlay">
-          <div className="modal-card" style={{ maxWidth: '780px' }}>
+          <div className="modal-card" style={{ maxWidth: '860px' }}>
             <div className="modal-header" style={{ background: '#fefce8', borderBottom: '1px solid #fef08a' }}>
               <div>
                 <h3 style={{ margin: 0, color: '#854d0e', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  ⚠️ Gestión de Saldos & Faltantes por Recibir
+                  <ShoppingCart size={20} /> Re-cotizar Saldo Pendiente & Emitir OC Complementaria
                 </h3>
                 <span style={{ fontSize: '12px', color: '#a16207', fontWeight: '700', fontFamily: 'monospace' }}>
-                  {saldoReq.correlativo} - Proveedor: {saldoReq.proveedor?.razon_social || 'Proveedor Cotizado'}
+                  Saldo Faltante de: {recotizarReq.correlativo}
                 </span>
               </div>
-              <button className="modal-close-btn" onClick={() => setShowSaldoModal(false)}><X size={18} /></button>
+              <button className="modal-close-btn" onClick={() => setShowRecotizarModal(false)}><X size={18} /></button>
             </div>
 
-            <div className="modal-body" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
-              <div style={{ background: '#fef9c3', border: '1px solid #fde047', color: '#713f12', padding: '12px 14px', borderRadius: '10px', fontSize: '13px', marginBottom: '16px' }}>
-                ⚠️ <strong>Atención Compras:</strong> Esta Orden de Compra fue recepcionada parcialmente en almacén. Revise las cantidades entregadas vs. los saldos pendientes y elija si esperar el lote complementario o cerrar el faltante.
+            <form onSubmit={handleSubmitRecotizacion}>
+              <div className="modal-body" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
+                <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e', padding: '10px 14px', borderRadius: '8px', fontSize: '13px', marginBottom: '14px' }}>
+                  ℹ️ Este formulario contiene <strong>únicamente el saldo remanente pendiente</strong> de la orden {recotizarReq.correlativo}. Puede seleccionar un nuevo proveedor, actualizar precios unitarios y emitir una nueva Orden de Compra Complementaria (estado PEDIDO).
+                </div>
+
+                <div className="form-group" style={{ background: '#ffffff', padding: '14px', border: '1px solid #cbd5e1', borderRadius: '10px' }}>
+                  <label style={{ fontWeight: '700', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Truck size={16} color="#2563eb" /> Seleccionar Proveedor Ganador / Cotizado
+                  </label>
+                  <select
+                    required
+                    value={recotizarProveedorId}
+                    onChange={(e) => setRecotizarProveedorId(e.target.value)}
+                    style={{ fontSize: '14px', fontWeight: '600' }}
+                  >
+                    <option value="">-- Seleccionar Proveedor --</option>
+                    {proveedoresList.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.razon_social} (RUC: {p.ruc})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <h4 style={{ margin: '16px 0 8px 0', fontSize: '14px', color: '#0f172a' }}>
+                  Ítems con Saldo Pendiente a Re-cotizar:
+                </h4>
+
+                {recotizarDetalles.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '24px 16px', background: '#fff1f2', border: '1px dashed #f43f5e', borderRadius: '8px', color: '#9f1239' }}>
+                    <p style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: '700' }}>
+                      ⚠️ Se han quitado todos los ítems de la re-cotización
+                    </p>
+                    <p style={{ margin: '0 0 14px 0', fontSize: '12.5px', color: '#881337' }}>
+                      Si ya no se va a requerir la compra de estos materiales restantes, puede anular directamente el saldo pendiente de este requerimiento.
+                    </p>
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      onClick={() => {
+                        setShowRecotizarModal(false);
+                        handleAnularSaldo(recotizarReq.id);
+                      }}
+                      style={{ background: '#ffffff', color: '#e11d48', borderColor: '#fecdd3', fontWeight: '600', padding: '6px 14px', fontSize: '13px' }}
+                    >
+                      <XCircle size={15} /> Anular Saldo Pendiente Ahora
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {recotizarDetalles.map((row, idx) => (
+                      <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1.8fr 0.9fr 1.6fr 1fr 38px', gap: '12px', alignItems: 'center', background: '#f8fafc', padding: '12px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                        <div>
+                          <strong style={{ fontSize: '12px', color: '#2563eb', fontFamily: 'monospace', display: 'block' }}>
+                            {row.producto_sku}
+                          </strong>
+                          <span style={{ fontSize: '13.5px', fontWeight: '600', color: '#0f172a' }}>
+                            {row.producto_nombre}
+                          </span>
+                        </div>
+
+                        <div>
+                          <label style={{ fontSize: '11px', color: '#b45309', fontWeight: '700' }}>Saldo Pendiente</label>
+                          <input
+                            type="number"
+                            min="1"
+                            required
+                            value={row.cantidad_solicitada}
+                            onChange={(e) => handleRecotizarChange(idx, 'cantidad_solicitada', e.target.value)}
+                          />
+                        </div>
+
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '4px', flexWrap: 'wrap', gap: '4px' }}>
+                            <label style={{ fontSize: '11px', color: '#64748b', margin: 0 }}>Costo Unit. (S/)</label>
+                            <span
+                              style={{
+                                fontSize: '11px',
+                                fontWeight: '600',
+                                color: '#0284c7',
+                                background: '#e0f2fe',
+                                padding: '1px 6px',
+                                borderRadius: '4px',
+                              }}
+                              title="Último precio de compra registrado en notas de ingreso"
+                            >
+                              Últ. Compra: S/ {Number(row.ultimo_precio_compra || 0).toFixed(2)}
+                            </span>
+                          </div>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            required
+                            placeholder="0.00"
+                            value={row.costo_unitario}
+                            onChange={(e) => handleRecotizarChange(idx, 'costo_unitario', e.target.value)}
+                          />
+                          {Number(row.ultimo_precio_compra) > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRecotizarChange(idx, 'costo_unitario', Number(row.ultimo_precio_compra).toFixed(2))}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                padding: '3px 0 0 0',
+                                fontSize: '11.5px',
+                                color: '#2563eb',
+                                cursor: 'pointer',
+                                textDecoration: 'underline',
+                                fontWeight: '500',
+                                display: 'inline-block',
+                              }}
+                              title="Copiar último precio de compra registrado"
+                            >
+                              ⚡ Usar último precio
+                            </button>
+                          )}
+                        </div>
+
+                        <div>
+                          <label style={{ fontSize: '11px', color: '#64748b' }}>Total x Prod.</label>
+                          <strong style={{ display: 'block', padding: '8px', background: '#ffffff', borderRadius: '6px', fontSize: '13px', color: '#16a34a' }}>
+                            S/ {(Number(row.cantidad_solicitada) * Number(row.costo_unitario)).toFixed(2)}
+                          </strong>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'center' }}>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveRecotizarRow(idx)}
+                            style={{
+                              background: '#fff1f2',
+                              border: '1px solid #fecdd3',
+                              color: '#e11d48',
+                              borderRadius: '6px',
+                              padding: '7px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                            title="Quitar este ítem de la re-cotización"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ textAlign: 'right', marginTop: '16px', padding: '12px', background: '#fefce8', borderRadius: '8px', border: '1px solid #fef08a' }}>
+                  <span style={{ fontSize: '13px', color: '#854d0e', fontWeight: '600' }}>VALOR TOTAL OC COMPLEMENTARIA: </span>
+                  <strong style={{ color: '#a16207', fontSize: '20px', marginLeft: '8px' }}>
+                    S/ {calculateRecotizacionTotal().toFixed(2)}
+                  </strong>
+                </div>
               </div>
 
-              <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#0f172a' }}>Balance de Unidades por Producto:</h4>
-
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>SKU</th>
-                    <th>Producto</th>
-                    <th style={{ textStyle: 'center' }}>Solicitada Original</th>
-                    <th style={{ textStyle: 'center' }}>Total Recibida (NI)</th>
-                    <th style={{ textStyle: 'center' }}>Saldo Pendiente</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(saldoReq.detalles || saldoReq.requerimiento_detalles || []).map((d, idx) => {
-                    const prodObj = d.producto || productosList.find((p) => p.id === d.producto_id) || {};
-                    const sol = Number(d.cantidad_solicitada || 0);
-                    const rec = Number(d.cantidad_recibida !== undefined ? d.cantidad_recibida : (d.cantidad_solicitada * 0.8));
-                    const pend = Number(d.cantidad_pendiente !== undefined ? d.cantidad_pendiente : (sol - rec));
-
-                    return (
-                      <tr key={idx}>
-                        <td><strong style={{ fontFamily: 'monospace', color: '#2563eb' }}>{prodObj.sku || 'SKU'}</strong></td>
-                        <td style={{ fontWeight: '600' }}>{prodObj.nombre || 'Producto'}</td>
-                        <td style={{ textAlign: 'center', fontWeight: '600' }}>{sol} u.</td>
-                        <td style={{ textAlign: 'center', color: '#16a34a', fontWeight: '700' }}>{rec} u.</td>
-                        <td style={{ textAlign: 'center' }}>
-                          {pend > 0 ? (
-                            <strong style={{ color: '#dc2626', background: '#fef2f2', padding: '4px 10px', borderRadius: '6px', border: '1px solid #fca5a5' }}>
-                              {pend} u. Faltantes
-                            </strong>
-                          ) : (
-                            <span style={{ color: '#16a34a', fontWeight: '700' }}>✓ Completo</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
-              <button
-                type="button"
-                className="secondary-btn"
-                onClick={() => {
-                  alert('El requerimiento se mantendrá en estado PARCIAL a la espera de que el almacén registre la entrega del lote complementario.');
-                  setShowSaldoModal(false);
-                }}
-                style={{ background: '#eff6ff', color: '#1d4ed8', borderColor: '#93c5fd' }}
-              >
-                <Clock size={16} /> [Esperar / Emitir Complementaria]
-              </button>
-              
-              <button
-                type="button"
-                className="primary-btn"
-                onClick={() => handleCerrarFaltante(saldoReq.id)}
-                style={{ background: '#dc2626', borderColor: '#b91c1c' }}
-              >
-                <XCircle size={16} /> [Cerrar / Cancelar Faltante]
-              </button>
-            </div>
+              <div className="modal-footer">
+                <button type="button" className="secondary-btn" onClick={() => setShowRecotizarModal(false)}>Cancelar</button>
+                <button
+                  type="submit"
+                  className="primary-btn"
+                  disabled={recotizarDetalles.length === 0}
+                  style={{
+                    background: recotizarDetalles.length === 0 ? '#94a3b8' : '#2563eb',
+                    borderColor: recotizarDetalles.length === 0 ? '#94a3b8' : '#2563eb',
+                    cursor: recotizarDetalles.length === 0 ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  <Check size={16} /> Emitir Orden Complementaria (PEDIDO)
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -33,6 +33,7 @@ import {
   ROLE_BADGE_COLORS,
   normalizeRole,
   hasPermission,
+  useRole,
 } from '../config/rbacConfig';
 import api from '../services/api';
 import './MainLayout.css';
@@ -68,13 +69,7 @@ export default function MainLayout({ children }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const [user, setUser] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('user')) || {};
-    } catch {
-      return {};
-    }
-  });
+  const { user, role: currentRole } = useRole();
 
   const [pageTitle, setPageTitle] = useState('Sistema de Almacén');
 
@@ -83,7 +78,6 @@ export default function MainLayout({ children }) {
     movimientos: true,
   });
 
-  const currentRole = normalizeRole(user);
   const roleBadgeStyle = ROLE_BADGE_COLORS[currentRole] || ROLE_BADGE_COLORS[ROLES.ALMACENERO];
 
   useEffect(() => {
@@ -114,11 +108,22 @@ export default function MainLayout({ children }) {
     }));
   };
 
+  const handleGroupClick = (item) => {
+    if (collapsed) {
+      if (item.children && item.children.length > 0) {
+        navigate(item.children[0].path);
+      }
+    } else {
+      toggleSubmenu(item.id);
+    }
+  };
+
   const handleRoleChange = (e) => {
     const newRole = e.target.value;
-    const updatedUser = { ...user, rol: { nombre: newRole } };
-    setUser(updatedUser);
+    const updatedUser = { ...user, rol: { nombre: newRole }, role: newRole };
     localStorage.setItem('user', JSON.stringify(updatedUser));
+    window.dispatchEvent(new Event('storage'));
+    window.dispatchEvent(new CustomEvent('roleChanged', { detail: newRole }));
   };
 
   const handleLogout = async () => {
@@ -169,7 +174,7 @@ export default function MainLayout({ children }) {
                 <div key={item.id} className="nav-group">
                   <button
                     className={`nav-item ${isAnyChildActive ? 'active' : ''}`}
-                    onClick={() => toggleSubmenu(item.id)}
+                    onClick={() => handleGroupClick(item)}
                     title={collapsed ? item.title : ''}
                   >
                     <div className="nav-item-content">

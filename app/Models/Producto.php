@@ -28,6 +28,7 @@ class Producto extends Model
 
     protected $appends = [
         'stock_equivalente',
+        'ultimo_precio_compra',
     ];
 
     protected function casts(): array
@@ -86,6 +87,26 @@ class Producto extends Model
         }
 
         return implode(' y ', $partes);
+    }
+
+    /**
+     * Obtiene el último precio de compra registrado en notas de ingreso para este producto.
+     */
+    public function getUltimoPrecioCompraAttribute(): ?float
+    {
+        if (array_key_exists('ultimo_precio_compra', $this->attributes)) {
+            return $this->attributes['ultimo_precio_compra'] !== null
+                ? (float) $this->attributes['ultimo_precio_compra']
+                : null;
+        }
+
+        $ultimo = EntradaDetalle::where('producto_id', $this->id)
+            ->join('entradas_cabecera', 'entradas_cabecera.id', '=', 'entradas_detalle.entrada_cabecera_id')
+            ->orderByDesc('entradas_cabecera.fecha_emision')
+            ->orderByDesc('entradas_detalle.id')
+            ->value('entradas_detalle.costo_unitario');
+
+        return (float) ($ultimo ?? $this->costo_unitario ?? 0.00);
     }
 
     public function entradasDetalle(): HasMany

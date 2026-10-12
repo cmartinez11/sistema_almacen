@@ -39,6 +39,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('proveedores', ProveedorController::class);
     Route::get('reportes/stock-critico', [ProductoController::class, 'stockCritico']);
     Route::get('productos/stock-critico', [ProductoController::class, 'stockCritico']);
+    Route::get('productos/{id}/movimientos-historial', [ProductoController::class, 'movimientosHistorial']);
     Route::apiResource('productos', ProductoController::class);
     Route::apiResource('categorias', CategoriaController::class);
     Route::apiResource('unidades-medida', UnidadMedidaController::class);
@@ -63,9 +64,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('requerimientos/{id}/aprobar', [RequerimientoController::class, 'aprobar']);
     Route::put('requerimientos/{id}/rechazar', [RequerimientoController::class, 'rechazar']);
     Route::put('requerimientos/{id}/cerrar-faltante', [RequerimientoController::class, 'cerrarFaltante']);
+    Route::put('requerimientos/{id}/recotizar-saldo', [RequerimientoController::class, 'recotizarSaldo']);
+    Route::put('requerimientos/{id}/anular-saldo', [RequerimientoController::class, 'anularSaldo']);
 
     Route::get('kardex/producto/{productoId}', [KardexController::class, 'getByProducto']);
     Route::get('kardex/valorizado', [KardexController::class, 'getValorizadoResumen']);
+    Route::get('kardex/valorizado/exportar', [KardexController::class, 'exportValorizadoCsv']);
+    Route::get('reportes/kardex-valorizado/exportar', [KardexController::class, 'exportValorizadoCsv']);
 });
 
 // Rutas Directas de Respaldo para desarrollo y pruebas de clientes API
@@ -73,6 +78,7 @@ Route::apiResource('almacenes', AlmacenController::class)->only(['index']);
 Route::apiResource('proveedores', ProveedorController::class);
 Route::get('reportes/stock-critico', [ProductoController::class, 'stockCritico']);
 Route::get('productos/stock-critico', [ProductoController::class, 'stockCritico']);
+Route::get('productos/{id}/movimientos-historial', [ProductoController::class, 'movimientosHistorial']);
 Route::apiResource('productos', ProductoController::class);
 Route::apiResource('categorias', CategoriaController::class);
 Route::apiResource('unidades-medida', UnidadMedidaController::class);
@@ -93,5 +99,9 @@ Route::put('requerimientos/{id}/cotizar', [RequerimientoController::class, 'coti
 Route::put('requerimientos/{id}/aprobar', [RequerimientoController::class, 'aprobar']);
 Route::put('requerimientos/{id}/rechazar', [RequerimientoController::class, 'rechazar']);
 Route::put('requerimientos/{id}/cerrar-faltante', [RequerimientoController::class, 'cerrarFaltante']);
+Route::put('requerimientos/{id}/recotizar-saldo', [RequerimientoController::class, 'recotizarSaldo']);
+Route::put('requerimientos/{id}/anular-saldo', [RequerimientoController::class, 'anularSaldo']);
 Route::get('kardex/producto/{productoId}', [KardexController::class, 'getByProducto']);
 Route::get('kardex/valorizado', [KardexController::class, 'getValorizadoResumen']);
+Route::get('kardex/valorizado/exportar', [KardexController::class, 'exportValorizadoCsv']);
+Route::get('reportes/kardex-valorizado/exportar', [KardexController::class, 'exportValorizadoCsv']);

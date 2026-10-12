@@ -292,7 +292,16 @@ class RequerimientoController extends Controller
      */
     public function cerrarFaltante(string $id): JsonResponse
     {
-        $req = Requerimiento::with('detalles')->find($id);
+        return $this->anularSaldo($id);
+    }
+
+    /**
+     * Anular saldo pendiente de un requerimiento parcial.
+     * Cambia el estado a 'parcial_anulado' y lo traslada al historial general.
+     */
+    public function anularSaldo(string $id): JsonResponse
+    {
+        $req = Requerimiento::with(['personal', 'proveedor', 'detalles.producto.unidadMedida'])->find($id);
 
         if (!$req) {
             return response()->json([
@@ -302,13 +311,92 @@ class RequerimientoController extends Controller
         }
 
         DB::transaction(function () use ($req) {
-            $req->update(['estado' => 'cerrado']);
+            $obs = $req->observaciones ? $req->observaciones . " | " : '';
+            $req->update([
+                'estado' => 'parcial_anulado',
+                'observaciones' => $obs . "Saldo pendiente anulado por Compras (" . now()->format('d/m/Y H:i') . ")",
+            ]);
         });
 
         return response()->json([
             'status' => 'success',
-            'message' => "Saldo pendiente del requerimiento {$req->correlativo} descartado. Estado final: CERRADO.",
-            'data' => $req->load(['personal', 'proveedor', 'detalles.producto.unidadMedida']),
+            'message' => "El saldo pendiente del requerimiento {$req->correlativo} fue anulado. Estado: PARCIAL ANULADO.",
+            'data' => $req->fresh(['personal', 'proveedor', 'detalles.producto.unidadMedida']),
         ], 200);
+    }
+
+    /**
+     * Re-cotizar saldo pendiente con un nuevo o mismo proveedor.
+     * Emite una nueva Orden de Compra Complementaria en estado 'pedido' con las cantidades pendientes
+     * y finaliza la orden original como 'cerrado'.
+     */
+    public function recotizarSaldo(Request $request, string $id): JsonResponse
+    {
+        $reqOriginal = Requerimiento::with(['detalles.producto'])->find($id);
+
+        if (!$reqOriginal) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Requerimiento original no encontrado',
+            ], 404);
+        }
+
+        $validated = $request->validate([
+            'proveedor_id' => 'required|exists:proveedores,id',
+            'detalles' => 'required|array|min:1',
+            'detalles.*.producto_id' => 'required|exists:productos,id',
+            'detalles.*.cantidad_solicitada' => 'required|numeric|gt:0',
+            'detalles.*.costo_unitario' => 'required|numeric|min:0',
+            'observaciones' => 'nullable|string',
+        ]);
+
+        try {
+            $nuevoReq = DB::transaction(function () use ($reqOriginal, $validated) {
+                $lastId = DB::table('requerimientos')->max('id') ?? 0;
+                $correlativo = 'REQ-' . date('Y') . '-' . str_pad($lastId + 1, 4, '0', STR_PAD_LEFT);
+
+                // 1. Crear nueva Orden de Compra Complementaria
+                $nuevo = Requerimiento::create([
+                    'correlativo' => $correlativo,
+                    'personal_id' => $reqOriginal->personal_id,
+                    'area' => $reqOriginal->area,
+                    'fecha_solicitud' => now(),
+                    'prioridad' => $reqOriginal->prioridad,
+                    'proveedor_id' => $validated['proveedor_id'],
+                    'estado' => 'pedido', // Emitida como OC lista para recepcionar en almacén
+                    'observaciones' => $validated['observaciones'] ?? "OC Complementaria por saldo pendiente de {$reqOriginal->correlativo}",
+                ]);
+
+                foreach ($validated['detalles'] as $item) {
+                    RequerimientoDetalle::create([
+                        'requerimiento_id' => $nuevo->id,
+                        'producto_id' => $item['producto_id'],
+                        'cantidad_solicitada' => (float) $item['cantidad_solicitada'],
+                        'costo_unitario' => (float) $item['costo_unitario'],
+                    ]);
+                }
+
+                // 2. Cerrar la orden original con trazabilidad cruzada
+                $obsOriginal = $reqOriginal->observaciones ? $reqOriginal->observaciones . " | " : '';
+                $reqOriginal->update([
+                    'estado' => 'cerrado',
+                    'observaciones' => $obsOriginal . "Saldo pendiente re-cotizado en nueva OC Complementaria {$nuevo->correlativo}",
+                ]);
+
+                return $nuevo;
+            });
+
+            return response()->json([
+                'status' => 'success',
+                'message' => "Nueva Orden Complementaria {$nuevoReq->correlativo} emitida con éxito en estado PEDIDO. La orden anterior {$reqOriginal->correlativo} fue cerrada.",
+                'data' => $nuevoReq->load(['personal', 'proveedor', 'detalles.producto.unidadMedida']),
+            ], 201);
+
+        } catch (Throwable $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Error al re-cotizar el saldo pendiente: ' . $e->getMessage(),
+            ], 422);
+        }
     }
 }

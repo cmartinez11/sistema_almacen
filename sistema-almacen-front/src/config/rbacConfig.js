@@ -1,3 +1,5 @@
+import { useState, useEffect } from 'react';
+
 // Configuración de Roles y Permisos RBAC para Sistema de Almacén
 
 export const ROLES = {
@@ -48,6 +50,22 @@ export const normalizeRole = (user) => {
     .replace(/[\u0300-\u036f]/g, '')
     .trim();
 
+  if (normalized.includes('almacen') || normalized.includes('operador') || normalized.includes('planta')) {
+    return ROLES.ALMACENERO;
+  }
+  if (normalized.includes('supervis')) {
+    return ROLES.SUPERVISOR;
+  }
+  if (normalized.includes('compra')) {
+    return ROLES.COMPRAS;
+  }
+  if (normalized.includes('geren')) {
+    return ROLES.GERENCIA;
+  }
+  if (normalized.includes('admin')) {
+    return ROLES.ADMINISTRADOR;
+  }
+
   return normalized || ROLES.ADMINISTRADOR;
 };
 
@@ -55,6 +73,50 @@ export const hasPermission = (user, allowedRoles = []) => {
   if (!allowedRoles || allowedRoles.length === 0) return true;
   const userRole = normalizeRole(user);
   return allowedRoles.includes(userRole);
+};
+
+/**
+ * Matriz de Permisos Financieros:
+ * - Rol Compras / Administrador / Gerencia: Acceso completo con costos y precios.
+ * - Rol Almacén / Supervisor: Enfoque estrictamente en control físico (costos y precios ocultos).
+ */
+export const canViewFinancials = (user) => {
+  const role = normalizeRole(user);
+  return role === ROLES.ADMINISTRADOR || role === ROLES.COMPRAS || role === ROLES.GERENCIA;
+};
+
+/**
+ * Hook reactivo para sincronizar cualquier vista ante cambios de rol activo en el probador o sesión.
+ */
+export const useRole = () => {
+  const [user, setUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('user')) || {};
+    } catch {
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      try {
+        setUser(JSON.parse(localStorage.getItem('user')) || {});
+      } catch {
+        setUser({});
+      }
+    };
+    window.addEventListener('storage', handleUpdate);
+    window.addEventListener('roleChanged', handleUpdate);
+    return () => {
+      window.removeEventListener('storage', handleUpdate);
+      window.removeEventListener('roleChanged', handleUpdate);
+    };
+  }, []);
+
+  const role = normalizeRole(user);
+  const canViewPrices = canViewFinancials(user);
+
+  return { user, role, canViewPrices };
 };
 
 export const MENU_ITEMS = [
@@ -69,28 +131,28 @@ export const MENU_ITEMS = [
     id: 'productos',
     title: 'Productos & Catálogos',
     icon: 'Package',
-    allowedRoles: [ROLES.ADMINISTRADOR, ROLES.ALMACENERO, ROLES.SUPERVISOR, ROLES.GERENCIA],
+    allowedRoles: [ROLES.ADMINISTRADOR, ROLES.COMPRAS, ROLES.ALMACENERO, ROLES.SUPERVISOR, ROLES.GERENCIA],
     children: [
       {
         id: 'productos-catalogo',
         title: 'Catálogo de Productos',
         path: '/productos/catalogo',
         icon: 'Boxes',
-        allowedRoles: [ROLES.ADMINISTRADOR, ROLES.ALMACENERO, ROLES.SUPERVISOR, ROLES.GERENCIA],
+        allowedRoles: [ROLES.ADMINISTRADOR, ROLES.COMPRAS, ROLES.ALMACENERO, ROLES.SUPERVISOR, ROLES.GERENCIA],
       },
       {
         id: 'productos-categorias',
         title: 'Categorías',
         path: '/productos/categorias',
         icon: 'Tags',
-        allowedRoles: [ROLES.ADMINISTRADOR, ROLES.ALMACENERO],
+        allowedRoles: [ROLES.ADMINISTRADOR, ROLES.COMPRAS, ROLES.ALMACENERO, ROLES.SUPERVISOR, ROLES.GERENCIA],
       },
       {
         id: 'productos-unidades',
         title: 'Unidades de Medida',
         path: '/productos/unidades',
         icon: 'Scale',
-        allowedRoles: [ROLES.ADMINISTRADOR, ROLES.ALMACENERO],
+        allowedRoles: [ROLES.ADMINISTRADOR, ROLES.COMPRAS, ROLES.ALMACENERO, ROLES.SUPERVISOR, ROLES.GERENCIA],
       },
     ],
   },
@@ -176,7 +238,7 @@ export const MENU_ITEMS = [
         title: 'Kardex Valorizado',
         path: '/reportes/kardex-valorizado',
         icon: 'DollarSign',
-        allowedRoles: [ROLES.ADMINISTRADOR, ROLES.ALMACENERO, ROLES.GERENCIA],
+        allowedRoles: [ROLES.ADMINISTRADOR, ROLES.COMPRAS, ROLES.GERENCIA],
       },
       {
         id: 'reportes-stock-critico',

@@ -9,12 +9,21 @@ const api = axios.create({
   timeout: 10000,
 });
 
-// Interceptor de Solicitud: Adjunta automáticamente el token Bearer
+// Interceptor de Solicitud: Adjunta automáticamente el token Bearer y el Rol activo
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+    }
+    try {
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      const role = user?.rol?.nombre || user?.role || user?.rol || '';
+      if (role) {
+        config.headers['X-User-Role'] = role;
+      }
+    } catch (e) {
+      // ignore JSON parse error
     }
     return config;
   },

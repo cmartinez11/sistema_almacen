@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, Download, Filter, PackageCheck } from 'lucide-react';
+import { DollarSign, Download, Filter, PackageCheck, ShieldAlert, FileText } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { useRole } from '../../config/rbacConfig';
 import api from '../../services/api';
 import '../pagesCommon.css';
 
 export default function KardexValorizadoPage() {
+  const { user, canViewPrices: userCanViewPrices } = useRole();
+
   const [valorizadoData, setValorizadoData] = useState([]);
   const [almacenes, setAlmacenes] = useState([]);
   const [selectedAlmacenId, setSelectedAlmacenId] = useState('');
@@ -12,8 +16,10 @@ export default function KardexValorizadoPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadInitialData();
-  }, []);
+    if (userCanViewPrices) {
+      loadInitialData();
+    }
+  }, [userCanViewPrices]);
 
   const loadInitialData = async () => {
     try {
@@ -47,15 +53,126 @@ export default function KardexValorizadoPage() {
     }
   };
 
+  const [exporting, setExporting] = useState(false);
+
   const handleAlmacenFilterChange = (e) => {
     const almId = e.target.value;
     setSelectedAlmacenId(almId);
     loadValorizadoData(almId);
   };
 
-  const handleExportExcel = () => {
-    alert('Generando archivo Excel del Kardex Valorizado para auditoría...');
+  const handleExportExcel = async () => {
+    try {
+      setExporting(true);
+      let url = '/reportes/kardex-valorizado/exportar';
+      if (selectedAlmacenId) {
+        url += `?almacen_id=${selectedAlmacenId}`;
+      }
+
+      const response = await api.get(url, {
+        responseType: 'blob',
+      });
+
+      // Extraer nombre de archivo desde cabeceras Content-Disposition o generar por defecto
+      let filename = 'kardex_valorizado.csv';
+      const disposition = response.headers?.['content-disposition'];
+      if (disposition && disposition.indexOf('filename=') !== -1) {
+        const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition);
+        if (matches != null && matches[1]) {
+          filename = matches[1].replace(/['"]/g, '');
+        }
+      } else {
+        const almName = selectedAlmacenId ? `_almacen_${selectedAlmacenId}` : '_consolidado';
+        filename = `kardex_valorizado${almName}_${new Date().toISOString().slice(0, 10)}.csv`;
+      }
+
+      // Crear objeto URL temporal y simular descarga automática en el navegador
+      const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' });
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (err) {
+      console.error('Error al exportar Kardex Valorizado:', err);
+      alert('Error al descargar el archivo del Kardex Valorizado. Por favor, intente nuevamente.');
+    } finally {
+      setExporting(false);
+    }
   };
+
+  if (!userCanViewPrices) {
+    return (
+      <div className="page-container">
+        <div className="page-header-card">
+          <div className="page-title-group">
+            <h2>Kardex Valorizado (Control Financiero de Inventario)</h2>
+            <p>Valorización contable en tiempo real calculada por el método de Promedio Ponderado por Almacén.</p>
+          </div>
+        </div>
+
+        <div
+          style={{
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '12px',
+            padding: '48px 24px',
+            textAlign: 'center',
+            marginTop: '20px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+          }}
+        >
+          <div
+            style={{
+              width: '64px',
+              height: '64px',
+              borderRadius: '50%',
+              background: '#fee2e2',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 16px',
+            }}
+          >
+            <ShieldAlert size={32} color="#dc2626" />
+          </div>
+          <h3 style={{ color: '#0f172a', marginBottom: '8px', fontSize: '18px' }}>
+            Acceso Restringido para el Rol Almacenero
+          </h3>
+          <p
+            style={{
+              color: '#64748b',
+              maxWidth: '540px',
+              margin: '0 auto 24px',
+              fontSize: '14px',
+              lineHeight: '1.6',
+            }}
+          >
+            Los costos contables, precios de compra y valorizaciones monetarias de inventario están reservados exclusivamente para los roles de <strong>Administración</strong> y <strong>Compras</strong>.
+            <br />
+            Para auditar entradas, salidas y stocks físicos sin valores monetarios, utilice el módulo correspondiente.
+          </p>
+          <Link
+            to="/reportes/kardex-fisico"
+            className="primary-btn"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              textDecoration: 'none',
+              padding: '10px 20px',
+              margin: '0 auto',
+            }}
+          >
+            <FileText size={18} /> Ir a Kardex Físico (Cantidades de Almacén)
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page-container">
@@ -88,8 +205,19 @@ export default function KardexValorizadoPage() {
               ))}
             </select>
           </div>
-          <button className="primary-btn" onClick={handleExportExcel} style={{ background: 'linear-gradient(135deg, #059669 0%, #047857 100%)' }}>
-            <Download size={18} /> Exportar Excel / SUNAT
+          <button
+            className="primary-btn"
+            onClick={handleExportExcel}
+            disabled={exporting}
+            style={{
+              background: exporting ? '#94a3b8' : 'linear-gradient(135deg, #059669 0%, #047857 100%)',
+              cursor: exporting ? 'wait' : 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+            }}
+          >
+            <Download size={18} /> {exporting ? 'Generando descarga...' : 'Exportar Excel / SUNAT'}
           </button>
         </div>
       </div>

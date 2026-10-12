@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { FileText, Search, ArrowDownLeft, ArrowUpRight, Package, Box } from 'lucide-react';
+import { useRole } from '../../config/rbacConfig';
 import api from '../../services/api';
 import '../pagesCommon.css';
 
 export default function KardexFisicoPage() {
+  const { user, canViewPrices: userCanViewPrices } = useRole();
+
   const [productosList, setProductosList] = useState([]);
   const [almacenes, setAlmacenes] = useState([]);
   const [selectedProductId, setSelectedProductId] = useState('');
@@ -155,7 +158,9 @@ export default function KardexFisicoPage() {
               </div>
               <div style={{ borderLeft: '1px solid #e2e8f0', paddingLeft: '16px' }}>
                 <small style={{ color: '#64748b', fontSize: '10.5px', textTransform: 'uppercase', fontWeight: '700' }}>Costo Promedio</small>
-                <div style={{ color: '#2563eb', fontWeight: '800', fontSize: '16px' }}>S/ {Number(selectedProductData.costo_unitario || 0).toFixed(2)}</div>
+                <div style={{ color: userCanViewPrices ? '#2563eb' : '#94a3b8', fontWeight: '800', fontSize: '16px' }}>
+                  {userCanViewPrices && selectedProductData.costo_unitario !== null ? `S/ ${Number(selectedProductData.costo_unitario || 0).toFixed(2)}` : '—'}
+                </div>
               </div>
             </div>
           )}
