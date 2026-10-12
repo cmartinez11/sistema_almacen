@@ -68,6 +68,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('requerimientos/{id}/anular-saldo', [RequerimientoController::class, 'anularSaldo']);
 
     Route::get('kardex/producto/{productoId}', [KardexController::class, 'getByProducto']);
+    Route::get('kardex/producto/{productoId}/exportar', [KardexController::class, 'exportarKardexProductoCsv']);
+    Route::get('kardex/producto/{productoId}/pdf', [KardexController::class, 'exportarKardexProductoPdf']);
+    Route::get('reportes/kardex-producto/exportar', [KardexController::class, 'exportarKardexProductoCsv']);
+    Route::get('reportes/kardex-producto/pdf', [KardexController::class, 'exportarKardexProductoPdf']);
+    Route::get('reportes/kardex-valorizado/pdf', [KardexController::class, 'exportarKardexProductoPdf']);
     Route::get('kardex/valorizado', [KardexController::class, 'getValorizadoResumen']);
     Route::get('kardex/valorizado/exportar', [KardexController::class, 'exportValorizadoCsv']);
     Route::get('reportes/kardex-valorizado/exportar', [KardexController::class, 'exportValorizadoCsv']);
@@ -102,6 +107,11 @@ Route::put('requerimientos/{id}/cerrar-faltante', [RequerimientoController::clas
 Route::put('requerimientos/{id}/recotizar-saldo', [RequerimientoController::class, 'recotizarSaldo']);
 Route::put('requerimientos/{id}/anular-saldo', [RequerimientoController::class, 'anularSaldo']);
 Route::get('kardex/producto/{productoId}', [KardexController::class, 'getByProducto']);
+Route::get('kardex/producto/{productoId}/exportar', [KardexController::class, 'exportarKardexProductoCsv']);
+Route::get('kardex/producto/{productoId}/pdf', [KardexController::class, 'exportarKardexProductoPdf']);
+Route::get('reportes/kardex-producto/exportar', [KardexController::class, 'exportarKardexProductoCsv']);
+Route::get('reportes/kardex-producto/pdf', [KardexController::class, 'exportarKardexProductoPdf']);
+Route::get('reportes/kardex-valorizado/pdf', [KardexController::class, 'exportarKardexProductoPdf']);
 Route::get('kardex/valorizado', [KardexController::class, 'getValorizadoResumen']);
 Route::get('kardex/valorizado/exportar', [KardexController::class, 'exportValorizadoCsv']);
 Route::get('reportes/kardex-valorizado/exportar', [KardexController::class, 'exportValorizadoCsv']);

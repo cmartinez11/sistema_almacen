@@ -207,7 +207,9 @@ export default function RequerimientosPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const fechaActualSistema = new Date().toISOString();
+      const ahora = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const fechaActualSistema = `${ahora.getFullYear()}-${pad(ahora.getMonth() + 1)}-${pad(ahora.getDate())} ${pad(ahora.getHours())}:${pad(ahora.getMinutes())}:${pad(ahora.getSeconds())}`;
 
       const payload = {
         personal_id: asignarEspecial ? formHeader.personal_id || null : null,

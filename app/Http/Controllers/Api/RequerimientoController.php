@@ -92,7 +92,9 @@ class RequerimientoController extends Controller
                     'correlativo' => $correlativo,
                     'personal_id' => !empty($validated['personal_id']) ? $validated['personal_id'] : null,
                     'area' => !empty($validated['area']) ? $validated['area'] : null,
-                    'fecha_solicitud' => $validated['fecha_solicitud'],
+                    'fecha_solicitud' => !empty($validated['fecha_solicitud'])
+                        ? \Carbon\Carbon::parse($validated['fecha_solicitud'])->setTimezone('America/Lima')->format('Y-m-d H:i:s')
+                        : now()->format('Y-m-d H:i:s'),
                     'prioridad' => $validated['prioridad'],
                     'estado' => 'pendiente',
                     'observaciones' => $validated['observaciones'] ?? null,

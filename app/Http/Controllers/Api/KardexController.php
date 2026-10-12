@@ -9,12 +9,14 @@ use App\Models\Kardex;
 use App\Models\Producto;
 use App\Models\SalidaCabecera;
 use App\Models\SalidaDetalle;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 
 class KardexController extends Controller
 {
     /**
-     * Obtener movimientos de Kardex Físico y Valorizado para un producto específico, opcionalmente filtrado por almacén.
+     * Obtener movimientos de Kardex Físico y Valorizado para un producto específico, calculando
+     * en tiempo real el Promedio Ponderado Móvil según normativa contable (SUNAT Formato 13.1).
      */
     public function getByProducto(string $productoId, \Illuminate\Http\Request $request): JsonResponse
     {
@@ -31,7 +33,60 @@ class KardexController extends Controller
             ?? $request->header('X-Almacen-Id')
             ?? $request->attributes->get('active_almacen_id');
 
-        // Buscar movimientos registrados en la tabla 'kardex' con la relación de almacén
+        $calculo = $this->calcularKardexDetalladoProducto($producto, $almacenId ? (int)$almacenId : null);
+
+        $canViewPrices = $this->userCanViewFinancials($request);
+        $movimientos = $calculo['movimientos'];
+        $kpis = $calculo['kpis'];
+        $prodData = $calculo['producto'];
+
+        if (!$canViewPrices) {
+            $prodData['costo_unitario'] = null;
+            $prodData['valor_total'] = null;
+
+            $kpis['total_entradas_valor'] = null;
+            $kpis['total_salidas_valor'] = null;
+            $kpis['costo_promedio_vigente'] = null;
+            $kpis['saldo_actual_valorizado'] = null;
+
+            foreach ($movimientos as &$m) {
+                $m['entrada_costo_unitario'] = null;
+                $m['entrada_total'] = null;
+                $m['salida_costo_unitario'] = null;
+                $m['salida_total'] = null;
+                $m['saldo_costo_promedio'] = null;
+                $m['saldo_total_valorizado'] = null;
+
+                $m['costo_unitario'] = null;
+                $m['costo_total_movimiento'] = null;
+                $m['saldo_valorizado'] = null;
+            }
+            unset($m);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'producto' => $prodData,
+                'kpis' => $kpis,
+                'movimientos' => $movimientos,
+                'filas' => $movimientos,
+            ],
+        ], 200);
+    }
+
+    /**
+     * Motor de cálculo secuencial del Promedio Ponderado Móvil para un producto específico.
+     * Sigue la fórmula contable:
+     * - Entradas: Cantidad, Costo Unitario, Total Entrada.
+     *   Nuevo Costo Unitario Promedio = (Valor Total Anterior + Total Entrada) / (Cant. Anterior + Cant. Entrada)
+     * - Salidas: Cantidad valorizada al último Costo Unitario Promedio vigente.
+     *   Total Salida = Cantidad Salida × C.U. Prom.
+     * - Saldos: Cantidad resultante y Valor Total Acumulado.
+     */
+    public function calcularKardexDetalladoProducto(Producto $producto, ?int $almacenId = null): array
+    {
+        // 1. Obtener movimientos registrados en tabla 'kardex' con relación de almacén
         $queryKardex = Kardex::with('almacen')->where('producto_id', $producto->id);
         if ($almacenId) {
             $queryKardex->where('almacen_id', $almacenId);
@@ -42,39 +97,49 @@ class KardexController extends Controller
             ->orderBy('id', 'asc')
             ->get();
 
-        $movimientos = [];
+        $rawItems = [];
 
         if ($movimientosKardex->count() > 0) {
             foreach ($movimientosKardex as $k) {
                 $tipoOp = strtoupper($k->tipo_operacion);
-                $esEntrada = in_array($tipoOp, ['ENTRADA', 'TRANSFERENCIA_ENTRADA', 'INGRESO']);
+                $esEntrada = in_array($tipoOp, ['ENTRADA', 'TRANSFERENCIA_ENTRADA', 'INGRESO', 'AJUSTE_POSITIVO', 'SALDO_INICIAL', 'COMPRA']);
                 $cantMov = (float) $k->cantidad_movimiento;
 
                 $docSustento = 'S/D';
                 $observacion = '';
+                $movLabel = $esEntrada ? 'Ingreso por Compra' : 'Despacho a Personal';
 
                 if (str_contains($tipoOp, 'TRANSFERENCIA')) {
                     $transf = \App\Models\Transferencia::with(['almacenOrigen', 'almacenDestino'])->find($k->documento_referencia_id);
                     if ($transf) {
-                        $docSustento = $transf->correlativo;
+                        $docSustento = $transf->correlativo ?? "TR-{$transf->id}";
                         if ($esEntrada) {
-                            $observacion = "Transferencia recibida desde " . ($transf->almacenOrigen->nombre ?? 'Almacén Origen');
+                            $observacion = "Transferencia desde " . ($transf->almacenOrigen->nombre ?? 'Almacén Origen');
+                            $movLabel = 'Transferencia de Entrada';
                         } else {
-                            $observacion = "Transferencia enviada a " . ($transf->almacenDestino->nombre ?? 'Almacén Destino');
+                            $observacion = "Transferencia hacia " . ($transf->almacenDestino->nombre ?? 'Almacén Destino');
+                            $movLabel = 'Transferencia de Salida';
                         }
                     } else {
                         $docSustento = "TR-{$k->documento_referencia_id}";
                         $observacion = $esEntrada ? "Transferencia de Ingreso" : "Transferencia de Salida";
+                        $movLabel = $esEntrada ? 'Transferencia de Entrada' : 'Transferencia de Salida';
                     }
+                } elseif (str_contains($tipoOp, 'AJUSTE') || str_contains($tipoOp, 'INVENTARIO')) {
+                    $docSustento = "AJ-" . str_pad($k->documento_referencia_id ?? $k->id, 5, '0', STR_PAD_LEFT);
+                    $movLabel = $esEntrada ? 'Ajuste Físico (+)' : 'Ajuste Físico (-)';
+                    $observacion = 'Ajuste por inventario físico';
                 } elseif ($esEntrada) {
                     $cabecera = EntradaCabecera::with('proveedor')->find($k->documento_referencia_id);
                     if ($cabecera) {
                         $docSustento = $cabecera->correlativo ?? ($cabecera->numero_comprobante ? 'NI-'.$cabecera->numero_comprobante : 'NI-'.$cabecera->id);
                         $prov = $cabecera->proveedor->razon_social ?? 'Proveedor';
-                        $observacion = "Ingreso por compra / recepción ({$prov})";
+                        $observacion = "Ingreso por compra ({$prov})";
+                        $movLabel = 'Ingreso / Compra';
                     } else {
                         $docSustento = "NI-{$k->documento_referencia_id}";
                         $observacion = "Ingreso de Almacén";
+                        $movLabel = 'Ingreso de Almacén';
                     }
                 } else {
                     $cabecera = SalidaCabecera::with('personal')->find($k->documento_referencia_id);
@@ -83,106 +148,197 @@ class KardexController extends Controller
                         $pers = $cabecera->personal ? "{$cabecera->personal->nombres} {$cabecera->personal->apellidos}" : 'Personal';
                         $dest = $cabecera->destino_cliente ?? 'Asignación Interna';
                         $observacion = "Despachado a {$pers} ({$dest})";
+                        $movLabel = 'Consumo / Despacho';
                     } else {
                         $docSustento = "NS-{$k->documento_referencia_id}";
                         $observacion = "Salida a Personal";
+                        $movLabel = 'Salida de Almacén';
                     }
                 }
 
-                $movimientos[] = [
+                $rawItems[] = [
                     'id' => $k->id,
-                    'almacen_id' => $k->almacen_id,
-                    'almacen' => $k->almacen ? ['id' => $k->almacen->id, 'nombre' => $k->almacen->nombre] : null,
-                    'fecha' => \Carbon\Carbon::parse($k->fecha_hora)->format('Y-m-d H:i'),
-                    'tipo' => strtoupper($k->tipo_operacion),
-                    'doc' => $docSustento,
-                    'entrada' => $esEntrada ? $cantMov : 0,
-                    'salida' => !$esEntrada ? $cantMov : 0,
-                    'saldo_fisico' => (float) $k->stock_actual,
+                    'fecha_hora' => $k->fecha_hora,
+                    'tipo_operacion' => $tipoOp,
+                    'es_entrada' => $esEntrada,
+                    'cantidad' => $cantMov,
                     'costo_unitario' => (float) $k->costo_unitario,
-                    'costo_total_movimiento' => (float) $k->costo_total_movimiento,
-                    'saldo_valorizado' => (float) $k->saldo_valorizado_total,
-                    'observacion' => $observacion,
+                    'documento' => $docSustento,
+                    'movimiento_label' => $movLabel,
+                    'detalle' => $observacion,
+                    'almacen_nombre' => $k->almacen->nombre ?? null,
                 ];
             }
         } else {
-            // Generar trazabilidad dinámica
+            // Trazabilidad dinámica desde tablas maestras
             $entradasQuery = EntradaDetalle::where('producto_id', $producto->id)
-                ->with(['entradaCabecera.proveedor']);
+                ->with(['entradaCabecera.proveedor', 'entradaCabecera.almacen']);
             if ($almacenId) {
                 $entradasQuery->whereHas('entradaCabecera', function ($q) use ($almacenId) {
                     $q->where('almacen_id', $almacenId);
                 });
             }
 
-            $entradas = $entradasQuery->get()
-                ->map(function ($det) {
-                    return [
-                        'fecha_hora' => $det->entradaCabecera->fecha_emision ?? $det->created_at,
-                        'tipo_operacion' => 'ENTRADA',
-                        'cantidad' => (float) $det->cantidad,
-                        'costo_unitario' => (float) $det->costo_unitario,
-                        'doc' => $det->entradaCabecera->numero_comprobante ?? 'NI-'.$det->entrada_cabecera_id,
-                        'observacion' => 'Ingreso de Almacén - ' . ($det->entradaCabecera->proveedor->razon_social ?? 'Proveedor'),
-                    ];
-                });
+            $entradas = $entradasQuery->get()->map(function ($det) {
+                $prov = $det->entradaCabecera->proveedor->razon_social ?? 'Proveedor';
+                return [
+                    'id' => $det->id,
+                    'fecha_hora' => $det->entradaCabecera->fecha_emision ?? $det->created_at,
+                    'tipo_operacion' => 'ENTRADA',
+                    'es_entrada' => true,
+                    'cantidad' => (float) $det->cantidad,
+                    'costo_unitario' => (float) $det->costo_unitario,
+                    'documento' => $det->entradaCabecera->correlativo ?? ($det->entradaCabecera->numero_comprobante ? 'NI-'.$det->entradaCabecera->numero_comprobante : 'NI-'.$det->entrada_cabecera_id),
+                    'movimiento_label' => 'Ingreso / Compra',
+                    'detalle' => 'Ingreso por compra (' . $prov . ')',
+                    'almacen_nombre' => $det->entradaCabecera->almacen->nombre ?? null,
+                ];
+            });
 
             $salidasQuery = SalidaDetalle::where('producto_id', $producto->id)
-                ->with(['salidaCabecera.personal']);
+                ->with(['salidaCabecera.personal', 'salidaCabecera.almacen']);
             if ($almacenId) {
                 $salidasQuery->whereHas('salidaCabecera', function ($q) use ($almacenId) {
                     $q->where('almacen_id', $almacenId);
                 });
             }
 
-            $salidas = $salidasQuery->get()
-                ->map(function ($det) {
-                    $pers = $det->salidaCabecera->personal ? $det->salidaCabecera->personal->nombres . ' ' . $det->salidaCabecera->personal->apellidos : 'Trabajador';
-                    return [
-                        'fecha_hora' => $det->salidaCabecera->fecha_emision ?? $det->created_at,
-                        'tipo_operacion' => 'SALIDA',
-                        'cantidad' => (float) $det->cantidad,
-                        'costo_unitario' => (float) $det->precio_unitario,
-                        'doc' => 'NS-'.str_pad($det->salida_cabecera_id, 5, '0', STR_PAD_LEFT),
-                        'observacion' => 'Entregado a ' . $pers,
-                    ];
-                });
+            $salidas = $salidasQuery->get()->map(function ($det) {
+                $pers = $det->salidaCabecera->personal ? ($det->salidaCabecera->personal->nombres . ' ' . $det->salidaCabecera->personal->apellidos) : 'Trabajador';
+                return [
+                    'id' => $det->id,
+                    'fecha_hora' => $det->salidaCabecera->fecha_emision ?? $det->created_at,
+                    'tipo_operacion' => 'SALIDA',
+                    'es_entrada' => false,
+                    'cantidad' => (float) $det->cantidad,
+                    'costo_unitario' => (float) $det->precio_unitario,
+                    'documento' => $det->salidaCabecera->correlativo ?? ('NS-'.str_pad($det->salida_cabecera_id, 5, '0', STR_PAD_LEFT)),
+                    'movimiento_label' => 'Consumo / Despacho',
+                    'detalle' => 'Despachado a ' . $pers,
+                    'almacen_nombre' => $det->salidaCabecera->almacen->nombre ?? null,
+                ];
+            });
 
-            $todosMovimientos = $entradas->concat($salidas)->sortBy('fecha_hora')->values();
+            $rawItems = $entradas->concat($salidas)
+                ->sortBy(function ($item) {
+                    return \Carbon\Carbon::parse($item['fecha_hora'])->timestamp;
+                })
+                ->values()
+                ->toArray();
+        }
 
-            $saldoActualTemp = 0;
-            $saldoValTemp = 0;
-            $idx = 1;
+        // 2. Ejecutar el cálculo secuencial del Promedio Ponderado Móvil
+        $saldoCantidad = 0.0;
+        $saldoValorTotal = 0.0;
+        $costoPromedioActual = (float) ($producto->costo_unitario ?? 0.0);
 
-            foreach ($todosMovimientos as $mov) {
-                $esEntrada = $mov['tipo_operacion'] === 'ENTRADA';
-                if ($esEntrada) {
-                    $saldoActualTemp += $mov['cantidad'];
-                    $costoMov = $mov['cantidad'] * $mov['costo_unitario'];
-                    $saldoValTemp += $costoMov;
-                } else {
-                    $saldoActualTemp = max(0, $saldoActualTemp - $mov['cantidad']);
-                    $costoMov = $mov['cantidad'] * $mov['costo_unitario'];
-                    $saldoValTemp = max(0, $saldoValTemp - $costoMov);
+        $movimientosCalculados = [];
+        $totalEntradasCant = 0.0;
+        $totalEntradasValor = 0.0;
+        $totalSalidasCant = 0.0;
+        $totalSalidasValor = 0.0;
+
+        foreach ($rawItems as $idx => $m) {
+            $esEntrada = (bool) ($m['es_entrada'] ?? false);
+            $cantidad = (float) $m['cantidad'];
+
+            if ($esEntrada) {
+                $costoUnitarioEntrada = (float) ($m['costo_unitario'] ?? 0.0);
+                if ($costoUnitarioEntrada <= 0 && $costoPromedioActual > 0) {
+                    $costoUnitarioEntrada = $costoPromedioActual;
                 }
 
-                $movimientos[] = [
-                    'id' => $idx++,
-                    'fecha' => \Carbon\Carbon::parse($mov['fecha_hora'])->format('Y-m-d H:i'),
-                    'tipo' => $mov['tipo_operacion'],
-                    'doc' => $mov['doc'],
-                    'entrada' => $esEntrada ? $mov['cantidad'] : 0,
-                    'salida' => !$esEntrada ? $mov['cantidad'] : 0,
-                    'saldo_fisico' => $saldoActualTemp,
-                    'costo_unitario' => $mov['costo_unitario'],
-                    'costo_total_movimiento' => $costoMov,
-                    'saldo_valorizado' => $saldoValTemp,
-                    'observacion' => $mov['observacion'],
+                $totalEntrada = round($cantidad * $costoUnitarioEntrada, 2);
+
+                $nuevaCantidad = $saldoCantidad + $cantidad;
+                $nuevoValorTotal = $saldoValorTotal + $totalEntrada;
+
+                // Fórmula contable: C.U. Prom = (Valor Total Anterior + Total Entrada) / (Cant. Anterior + Cant. Entrada)
+                $nuevoCuProm = $nuevaCantidad > 0 ? ($nuevoValorTotal / $nuevaCantidad) : $costoUnitarioEntrada;
+
+                $saldoCantidad = $nuevaCantidad;
+                $saldoValorTotal = $nuevoValorTotal;
+                $costoPromedioActual = $nuevoCuProm;
+
+                $totalEntradasCant += $cantidad;
+                $totalEntradasValor += $totalEntrada;
+
+                $movimientosCalculados[] = [
+                    'id' => $m['id'] ?? ($idx + 1),
+                    'fecha' => \Carbon\Carbon::parse($m['fecha_hora'])->format('Y-m-d H:i'),
+                    'tipo' => 'ENTRADA',
+                    'movimiento' => $m['movimiento_label'] ?? 'Ingreso / Compra',
+                    'documento' => $m['documento'] ?? 'S/D',
+                    'detalle' => $m['detalle'] ?? '',
+                    'almacen' => $m['almacen_nombre'] ?? null,
+                    // Columnas contables exactas:
+                    'entrada_cantidad' => $cantidad,
+                    'entrada_costo_unitario' => round($costoUnitarioEntrada, 4),
+                    'entrada_total' => round($totalEntrada, 2),
+                    'salida_cantidad' => 0.0,
+                    'salida_costo_unitario' => 0.0,
+                    'salida_total' => 0.0,
+                    'saldo_cantidad' => round($saldoCantidad, 4),
+                    'saldo_costo_promedio' => round($costoPromedioActual, 4),
+                    'saldo_total_valorizado' => round($saldoValorTotal, 2),
+
+                    // Campos de compatibilidad:
+                    'doc' => $m['documento'] ?? 'S/D',
+                    'entrada' => $cantidad,
+                    'salida' => 0.0,
+                    'saldo_fisico' => round($saldoCantidad, 2),
+                    'costo_unitario' => round($costoUnitarioEntrada, 4),
+                    'costo_total_movimiento' => round($totalEntrada, 2),
+                    'saldo_valorizado' => round($saldoValorTotal, 2),
+                    'observacion' => $m['detalle'] ?? '',
+                ];
+            } else { // Salida
+                // Salidas valorizadas estrictamente al último Costo Unitario Promedio vigente
+                $costoUnitarioSalida = $costoPromedioActual;
+                $totalSalida = round($cantidad * $costoUnitarioSalida, 2);
+
+                $nuevaCantidad = max(0.0, $saldoCantidad - $cantidad);
+                $nuevoValorTotal = $nuevaCantidad > 0 ? max(0.0, $saldoValorTotal - $totalSalida) : 0.0;
+
+                $saldoCantidad = $nuevaCantidad;
+                $saldoValorTotal = $nuevoValorTotal;
+
+                $totalSalidasCant += $cantidad;
+                $totalSalidasValor += $totalSalida;
+
+                $movimientosCalculados[] = [
+                    'id' => $m['id'] ?? ($idx + 1),
+                    'fecha' => \Carbon\Carbon::parse($m['fecha_hora'])->format('Y-m-d H:i'),
+                    'tipo' => 'SALIDA',
+                    'movimiento' => $m['movimiento_label'] ?? 'Consumo / Despacho',
+                    'documento' => $m['documento'] ?? 'S/D',
+                    'detalle' => $m['detalle'] ?? '',
+                    'almacen' => $m['almacen_nombre'] ?? null,
+                    // Columnas contables exactas:
+                    'entrada_cantidad' => 0.0,
+                    'entrada_costo_unitario' => 0.0,
+                    'entrada_total' => 0.0,
+                    'salida_cantidad' => $cantidad,
+                    'salida_costo_unitario' => round($costoUnitarioSalida, 4),
+                    'salida_total' => round($totalSalida, 2),
+                    'saldo_cantidad' => round($saldoCantidad, 4),
+                    'saldo_costo_promedio' => round($costoPromedioActual, 4),
+                    'saldo_total_valorizado' => round($saldoValorTotal, 2),
+
+                    // Campos de compatibilidad:
+                    'doc' => $m['documento'] ?? 'S/D',
+                    'entrada' => 0.0,
+                    'salida' => $cantidad,
+                    'saldo_fisico' => round($saldoCantidad, 2),
+                    'costo_unitario' => round($costoUnitarioSalida, 4),
+                    'costo_total_movimiento' => round($totalSalida, 2),
+                    'saldo_valorizado' => round($saldoValorTotal, 2),
+                    'observacion' => $m['detalle'] ?? '',
                 ];
             }
         }
 
-        // Obtener stock del almacén o stock global
+        // Obtener stock referencial de almacén si aplica
         $stockFiltrado = (float) $producto->stock_actual;
         $costoFiltrado = (float) $producto->costo_unitario;
 
@@ -199,33 +355,151 @@ class KardexController extends Controller
             }
         }
 
-        $canViewPrices = $this->userCanViewFinancials($request);
-        if (!$canViewPrices) {
-            $costoFiltrado = null;
-            foreach ($movimientos as &$m) {
-                $m['costo_unitario'] = null;
-                $m['costo_total_movimiento'] = null;
-                $m['saldo_valorizado'] = null;
-            }
-            unset($m);
+        return [
+            'producto' => [
+                'id' => $producto->id,
+                'sku' => $producto->sku,
+                'nombre' => $producto->nombre,
+                'stock_actual' => count($movimientosCalculados) > 0 ? $saldoCantidad : $stockFiltrado,
+                'costo_unitario' => count($movimientosCalculados) > 0 ? $costoPromedioActual : $costoFiltrado,
+                'valor_total' => count($movimientosCalculados) > 0 ? $saldoValorTotal : ($stockFiltrado * $costoFiltrado),
+                'categoria' => $producto->categoria->nombre ?? 'General',
+                'unidad_medida' => $producto->unidadMedida->nombre ?? 'UND',
+            ],
+            'kpis' => [
+                'total_entradas_cant' => round($totalEntradasCant, 2),
+                'total_entradas_valor' => round($totalEntradasValor, 2),
+                'total_salidas_cant' => round($totalSalidasCant, 2),
+                'total_salidas_valor' => round($totalSalidasValor, 2),
+                'saldo_actual_cant' => round($saldoCantidad, 2),
+                'costo_promedio_vigente' => round($costoPromedioActual, 4),
+                'saldo_actual_valorizado' => round($saldoValorTotal, 2),
+            ],
+            'movimientos' => $movimientosCalculados,
+        ];
+    }
+
+    /**
+     * Exportar reporte contable de Kardex Valorizado por Producto con estructura oficial (Excel / CSV UTF-8).
+     */
+    public function exportarKardexProductoCsv(\Illuminate\Http\Request $request)
+    {
+        if (!$this->userCanViewFinancials($request)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Acceso denegado: No tiene autorización para exportar datos financieros de valorización.',
+            ], 403);
         }
 
-        return response()->json([
-            'status' => 'success',
-            'data' => [
-                'producto' => [
-                    'id' => $producto->id,
-                    'sku' => $producto->sku,
-                    'nombre' => $producto->nombre,
-                    'stock_actual' => $stockFiltrado,
-                    'costo_unitario' => $costoFiltrado,
-                    'valor_total' => $costoFiltrado !== null ? ($stockFiltrado * $costoFiltrado) : null,
-                    'categoria' => $producto->categoria->nombre ?? 'General',
-                    'unidad_medida' => $producto->unidadMedida->nombre ?? 'UND',
-                ],
-                'movimientos' => $movimientos,
-            ],
-        ], 200);
+        $productoId = $request->input('producto_id') ?? $request->route('productoId');
+        if (!$productoId) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Debe especificar el ID del producto a exportar.',
+            ], 422);
+        }
+
+        $producto = Producto::with(['categoria', 'unidadMedida', 'almacenes'])->find($productoId);
+        if (!$producto) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Producto no encontrado.',
+            ], 404);
+        }
+
+        $almacenId = $request->input('almacen_id');
+        $almacen = $almacenId ? \App\Models\Almacen::find($almacenId) : null;
+        $nombreAlmacen = $almacen ? "{$almacen->nombre} ({$almacen->codigo})" : 'TODOS LOS ALMACENES (CONSOLIDADO)';
+
+        $calculo = $this->calcularKardexDetalladoProducto($producto, $almacenId ? (int)$almacenId : null);
+        $movimientos = $calculo['movimientos'];
+        $kpis = $calculo['kpis'];
+
+        $skuSlug = strtolower(preg_replace('/[^a-zA-Z0-9]/', '_', $producto->sku));
+        $filename = "kardex_valorizado_{$skuSlug}_" . date('Ymd_His') . '.csv';
+
+        $headers = [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+            'Pragma' => 'no-cache',
+            'Cache-Control' => 'must-revalidate, post-check=0, pre-check=0',
+            'Expires' => '0',
+        ];
+
+        $callback = function () use ($producto, $movimientos, $kpis, $nombreAlmacen) {
+            $handle = fopen('php://output', 'w');
+
+            // BOM UTF-8 para apertura directa y limpia en Microsoft Excel sin problemas de tildes
+            fputs($handle, "\xEF\xBB\xBF");
+
+            // Metadatos de cabecera contable oficial
+            fputcsv($handle, ['SISTEMA DE GESTIÓN DE ALMACÉN - KARDEX VALORIZADO POR PRODUCTO'], ';');
+            fputcsv($handle, ['FORMATO CONTABLE:', 'MÉTODO PROMEDIO PONDERADO MÓVIL (SUNAT FORMATO 13.1)'], ';');
+            fputcsv($handle, ['PRODUCTO:', "{$producto->sku} - {$producto->nombre}"], ';');
+            fputcsv($handle, ['CATEGORÍA:', $producto->categoria->nombre ?? 'General', 'UNIDAD MEDIDA:', $producto->unidadMedida->nombre ?? 'UND'], ';');
+            fputcsv($handle, ['ALMACÉN / PLANTA:', $nombreAlmacen], ';');
+            fputcsv($handle, ['FECHA Y HORA DE EMISIÓN:', date('d/m/Y H:i:s')], ';');
+            fputcsv($handle, [], ';');
+
+            // Columnas del reporte
+            fputcsv($handle, [
+                'FECHA Y HORA',
+                'TIPO OPERACIÓN',
+                'DETALLE / MOVIMIENTO',
+                'N° DOCUMENTO',
+                'PROVEEDOR / DESTINATARIO',
+                'ENTRADA CANTIDAD',
+                'ENTRADA C.U. (S/)',
+                'ENTRADA TOTAL (S/)',
+                'SALIDA CANTIDAD',
+                'SALIDA C.U. PROM (S/)',
+                'SALIDA TOTAL (S/)',
+                'SALDO CANTIDAD',
+                'SALDO C.U. PROM (S/)',
+                'SALDO TOTAL VALORIZADO (S/)',
+            ], ';');
+
+            foreach ($movimientos as $m) {
+                fputcsv($handle, [
+                    $m['fecha'],
+                    $m['tipo'],
+                    $m['movimiento'],
+                    $m['documento'],
+                    $m['detalle'],
+                    $m['entrada_cantidad'] > 0 ? number_format($m['entrada_cantidad'], 2, '.', '') : '0.00',
+                    $m['entrada_costo_unitario'] > 0 ? number_format($m['entrada_costo_unitario'], 4, '.', '') : '0.0000',
+                    $m['entrada_total'] > 0 ? number_format($m['entrada_total'], 2, '.', '') : '0.00',
+                    $m['salida_cantidad'] > 0 ? number_format($m['salida_cantidad'], 2, '.', '') : '0.00',
+                    $m['salida_costo_unitario'] > 0 ? number_format($m['salida_costo_unitario'], 4, '.', '') : '0.0000',
+                    $m['salida_total'] > 0 ? number_format($m['salida_total'], 2, '.', '') : '0.00',
+                    number_format($m['saldo_cantidad'], 2, '.', ''),
+                    number_format($m['saldo_costo_promedio'], 4, '.', ''),
+                    number_format($m['saldo_total_valorizado'], 2, '.', ''),
+                ], ';');
+            }
+
+            fputcsv($handle, [], ';');
+            fputcsv($handle, [
+                'TOTALES ACUMULADOS',
+                '',
+                '',
+                '',
+                '',
+                number_format($kpis['total_entradas_cant'], 2, '.', ''),
+                '',
+                number_format($kpis['total_entradas_valor'], 2, '.', ''),
+                number_format($kpis['total_salidas_cant'], 2, '.', ''),
+                '',
+                number_format($kpis['total_salidas_valor'], 2, '.', ''),
+                number_format($kpis['saldo_actual_cant'], 2, '.', ''),
+                number_format($kpis['costo_promedio_vigente'], 4, '.', ''),
+                number_format($kpis['saldo_actual_valorizado'], 2, '.', ''),
+            ], ';');
+
+            fclose($handle);
+        };
+
+        return response()->stream($callback, 200, $headers);
     }
 
     /**
@@ -397,5 +671,54 @@ class KardexController extends Controller
         };
 
         return response()->stream($callback, 200, $headers);
+    }
+
+    /**
+     * Exportar reporte oficial de Kardex Valorizado por Producto en formato PDF (Landscape).
+     */
+    public function exportarKardexProductoPdf(\Illuminate\Http\Request $request)
+    {
+        if (!$this->userCanViewFinancials($request)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Acceso denegado: No tiene autorización para exportar datos financieros de valorización.',
+            ], 403);
+        }
+
+        $productoId = $request->input('producto_id') ?? $request->route('productoId');
+        if (!$productoId) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Debe especificar el ID del producto a exportar.',
+            ], 422);
+        }
+
+        $producto = Producto::with(['categoria', 'unidadMedida', 'almacenes'])->find($productoId);
+        if (!$producto) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Producto no encontrado.',
+            ], 404);
+        }
+
+        $almacenId = $request->input('almacen_id');
+        $almacen = $almacenId ? \App\Models\Almacen::find($almacenId) : null;
+        $nombreAlmacen = $almacen ? "{$almacen->nombre} ({$almacen->codigo})" : 'TODOS LOS ALMACENES (CONSOLIDADO)';
+
+        $calculo = $this->calcularKardexDetalladoProducto($producto, $almacenId ? (int)$almacenId : null);
+        $movimientos = $calculo['movimientos'];
+        $kpis = $calculo['kpis'];
+
+        $skuSlug = strtolower(preg_replace('/[^a-zA-Z0-9]/', '_', $producto->sku));
+        $filename = "kardex_valorizado_{$skuSlug}_" . date('Ymd_His') . '.pdf';
+
+        $pdf = Pdf::loadView('pdf.kardex_producto', [
+            'producto' => $producto,
+            'nombreAlmacen' => $nombreAlmacen,
+            'movimientos' => $movimientos,
+            'kpis' => $kpis,
+        ])->setPaper('a4', 'landscape');
+
+        return $pdf->download($filename);
     }
 }
