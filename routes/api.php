@@ -34,7 +34,11 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Recursos API Full CRUD
     Route::apiResource('almacenes', AlmacenController::class)->only(['index']);
+    // Consulta SUNAT por RUC (ApisPeru)
+    Route::get('proveedores/consulta-ruc/{ruc}', [ProveedorController::class, 'consultarRuc']);
     Route::apiResource('proveedores', ProveedorController::class);
+    Route::get('reportes/stock-critico', [ProductoController::class, 'stockCritico']);
+    Route::get('productos/stock-critico', [ProductoController::class, 'stockCritico']);
     Route::apiResource('productos', ProductoController::class);
     Route::apiResource('categorias', CategoriaController::class);
     Route::apiResource('unidades-medida', UnidadMedidaController::class);
@@ -51,6 +55,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('transferencias', TransferenciaController::class)->only(['index', 'store', 'show']);
     Route::get('transferencias/{id}/pdf', [TransferenciaController::class, 'pdf']);
 
+    Route::apiResource('inventarios-fisicos', \App\Http\Controllers\Api\InventarioFisicoController::class)->only(['index', 'store', 'show']);
+
     Route::apiResource('requerimientos', RequerimientoController::class);
     Route::get('requerimientos/{id}/pdf', [RequerimientoController::class, 'exportPdf']);
     Route::put('requerimientos/{id}/cotizar', [RequerimientoController::class, 'cotizar']);
@@ -65,6 +71,8 @@ Route::middleware('auth:sanctum')->group(function () {
 // Rutas Directas de Respaldo para desarrollo y pruebas de clientes API
 Route::apiResource('almacenes', AlmacenController::class)->only(['index']);
 Route::apiResource('proveedores', ProveedorController::class);
+Route::get('reportes/stock-critico', [ProductoController::class, 'stockCritico']);
+Route::get('productos/stock-critico', [ProductoController::class, 'stockCritico']);
 Route::apiResource('productos', ProductoController::class);
 Route::apiResource('categorias', CategoriaController::class);
 Route::apiResource('unidades-medida', UnidadMedidaController::class);
@@ -78,6 +86,7 @@ Route::apiResource('salidas', SalidaController::class)->only(['index', 'store', 
 Route::get('salidas/{id}/pdf', [SalidaController::class, 'exportPdf']);
 Route::apiResource('transferencias', TransferenciaController::class)->only(['index', 'store', 'show']);
 Route::get('transferencias/{id}/pdf', [TransferenciaController::class, 'pdf']);
+Route::apiResource('inventarios-fisicos', \App\Http\Controllers\Api\InventarioFisicoController::class)->only(['index', 'store', 'show']);
 Route::apiResource('requerimientos', RequerimientoController::class);
 Route::get('requerimientos/{id}/pdf', [RequerimientoController::class, 'exportPdf']);
 Route::put('requerimientos/{id}/cotizar', [RequerimientoController::class, 'cotizar']);

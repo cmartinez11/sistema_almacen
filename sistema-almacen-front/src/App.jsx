@@ -12,19 +12,23 @@ import UnidadesMedidaPage from './pages/productos/UnidadesMedidaPage';
 import IngresosPage from './pages/movimientos/IngresosPage';
 import SalidasPage from './pages/movimientos/SalidasPage';
 import TransferenciasPage from './pages/movimientos/TransferenciasPage';
+import InventarioFisicoPage from './pages/movimientos/InventarioFisicoPage';
 import KardexFisicoPage from './pages/movimientos/KardexFisicoPage';
 import KardexValorizadoPage from './pages/movimientos/KardexValorizadoPage';
 import RequerimientosPage from './pages/requerimientos/RequerimientosPage';
 import ProveedoresPage from './pages/proveedores/ProveedoresPage';
 import PersonalPage from './pages/personal/PersonalPage';
 import ReportesPage from './pages/reportes/ReportesPage';
+import StockCriticoPage from './pages/reportes/StockCriticoPage';
 import UnauthorizedPage from './pages/UnauthorizedPage';
 
 import { ROLES } from './config/rbacConfig';
+import { AlmacenProvider } from './context/AlmacenContext';
 
 function App() {
   return (
-    <BrowserRouter>
+    <AlmacenProvider>
+      <BrowserRouter>
       <Routes>
         {/* RUTA PÚBLICA */}
         <Route path="/login" element={<Login />} />
@@ -49,7 +53,7 @@ function App() {
           }
         />
 
-        {/* 2. PRODUCTOS Y SUBMÓDULOS */}
+        {/* 2. PRODUCTOS Y CATÁLOGOS */}
         <Route path="/productos" element={<Navigate to="/productos/catalogo" replace />} />
 
         <Route
@@ -92,7 +96,7 @@ function App() {
           }
         />
 
-        {/* 3. MOVIMIENTOS Y SUBMÓDULOS */}
+        {/* 3. MOVIMIENTOS TRANSACCIONALES DE ALMACÉN */}
         <Route path="/movimientos" element={<Navigate to="/movimientos/ingresos" replace />} />
 
         <Route
@@ -135,37 +139,23 @@ function App() {
         />
 
         <Route
-          path="/movimientos/kardex-fisico"
+          path="/movimientos/inventario-fisico"
           element={
             <ProtectedRoute
-              allowedRoles={[
-                ROLES.ADMINISTRADOR,
-                ROLES.ALMACENERO,
-                ROLES.SUPERVISOR,
-                ROLES.GERENCIA,
-              ]}
+              allowedRoles={[ROLES.ADMINISTRADOR]}
             >
               <MainLayout>
-                <KardexFisicoPage />
+                <InventarioFisicoPage />
               </MainLayout>
             </ProtectedRoute>
           }
         />
 
-        <Route
-          path="/movimientos/kardex-valorizado"
-          element={
-            <ProtectedRoute
-              allowedRoles={[ROLES.ADMINISTRADOR, ROLES.ALMACENERO, ROLES.GERENCIA]}
-            >
-              <MainLayout>
-                <KardexValorizadoPage />
-              </MainLayout>
-            </ProtectedRoute>
-          }
-        />
+        {/* Redirecciones de compatibilidad para kardex anteriores */}
+        <Route path="/movimientos/kardex-fisico" element={<Navigate to="/reportes/kardex-fisico" replace />} />
+        <Route path="/movimientos/kardex-valorizado" element={<Navigate to="/reportes/kardex-valorizado" replace />} />
 
-        {/* 4. REQUERIMIENTOS */}
+        {/* 4. REQUERIMIENTOS Y ÓRDENES */}
         <Route
           path="/requerimientos"
           element={
@@ -183,7 +173,7 @@ function App() {
         <Route
           path="/proveedores"
           element={
-            <ProtectedRoute allowedRoles={[ROLES.ADMINISTRADOR, ROLES.COMPRAS]}>
+            <ProtectedRoute allowedRoles={[ROLES.ADMINISTRADOR, ROLES.COMPRAS, ROLES.ALMACENERO]}>
               <MainLayout>
                 <ProveedoresPage />
               </MainLayout>
@@ -205,7 +195,7 @@ function App() {
           }
         />
 
-        {/* 7. REPORTES */}
+        {/* 7. REPORTES, KARDEX & ANALÍTICA */}
         <Route
           path="/reportes"
           element={
@@ -214,6 +204,56 @@ function App() {
             >
               <MainLayout>
                 <ReportesPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/reportes/kardex-fisico"
+          element={
+            <ProtectedRoute
+              allowedRoles={[
+                ROLES.ADMINISTRADOR,
+                ROLES.ALMACENERO,
+                ROLES.SUPERVISOR,
+                ROLES.GERENCIA,
+              ]}
+            >
+              <MainLayout>
+                <KardexFisicoPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/reportes/kardex-valorizado"
+          element={
+            <ProtectedRoute
+              allowedRoles={[ROLES.ADMINISTRADOR, ROLES.ALMACENERO, ROLES.GERENCIA]}
+            >
+              <MainLayout>
+                <KardexValorizadoPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/reportes/stock-critico"
+          element={
+            <ProtectedRoute
+              allowedRoles={[
+                ROLES.ADMINISTRADOR,
+                ROLES.GERENCIA,
+                ROLES.SUPERVISOR,
+                ROLES.ALMACENERO,
+                ROLES.COMPRAS,
+              ]}
+            >
+              <MainLayout>
+                <StockCriticoPage />
               </MainLayout>
             </ProtectedRoute>
           }
@@ -242,6 +282,7 @@ function App() {
         />
       </Routes>
     </BrowserRouter>
+    </AlmacenProvider>
   );
 }
 

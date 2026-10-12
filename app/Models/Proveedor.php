@@ -15,6 +15,8 @@ class Proveedor extends Model
     protected $fillable = [
         'ruc',
         'razon_social',
+        'nombre_comercial',
+        'contacto_nombre',
         'telefono',
         'email',
         'direccion',
@@ -24,5 +26,10 @@ class Proveedor extends Model
     public function entradasCabecera(): HasMany
     {
         return $this->hasMany(EntradaCabecera::class, 'proveedor_id');
+    }
+
+    public function requerimientos(): HasMany
+    {
+        return $this->hasMany(Requerimiento::class, 'proveedor_id');
     }
 }

@@ -26,6 +26,7 @@ class Personal extends Authenticatable
         'telefono',
         'estado',
         'rol_id',
+        'almacen_id',
         'password',
     ];
 
@@ -43,6 +44,11 @@ class Personal extends Authenticatable
     public function rol(): BelongsTo
     {
         return $this->belongsTo(Rol::class, 'rol_id');
+    }
+
+    public function almacen(): BelongsTo
+    {
+        return $this->belongsTo(Almacen::class, 'almacen_id');
     }
 
     public function entradasCabecera(): HasMany

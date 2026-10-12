@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Filter, Edit, Trash2, PackageCheck, AlertCircle, X, Check, Info } from 'lucide-react';
+import { Plus, Search, Filter, Edit, Trash2, PackageCheck, AlertCircle, X, Check, Info, Layers } from 'lucide-react';
 import api from '../../services/api';
 import '../pagesCommon.css';
 
@@ -20,6 +20,9 @@ export default function ProductosCatalogoPage() {
     stock_actual: 0,
     stock_minimo: 5,
     costo_unitario: 0,
+    maneja_conversion: false,
+    unidad_secundaria_id: '',
+    factor_conversion: 10,
   });
 
   const mockProductos = [
@@ -74,6 +77,9 @@ export default function ProductosCatalogoPage() {
         stock_actual: prod.stock_actual || 0,
         stock_minimo: prod.stock_minimo || 5,
         costo_unitario: prod.costo_unitario || 0,
+        maneja_conversion: Boolean(prod.maneja_conversion),
+        unidad_secundaria_id: prod.unidad_secundaria_id || prod.unidad_secundaria?.id || '',
+        factor_conversion: prod.factor_conversion ? Number(prod.factor_conversion) : 10,
       });
     } else {
       setEditingId(null);
@@ -85,6 +91,9 @@ export default function ProductosCatalogoPage() {
         stock_actual: 0,
         stock_minimo: 5,
         costo_unitario: 0,
+        maneja_conversion: false,
+        unidad_secundaria_id: '',
+        factor_conversion: 10,
       });
     }
     setShowModal(true);
@@ -92,20 +101,27 @@ export default function ProductosCatalogoPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const payload = {
+      ...formData,
+      maneja_conversion: Boolean(formData.maneja_conversion),
+      unidad_secundaria_id: formData.maneja_conversion && formData.unidad_secundaria_id ? Number(formData.unidad_secundaria_id) : null,
+      factor_conversion: formData.maneja_conversion ? (Number(formData.factor_conversion) || 1) : 1,
+    };
+
     try {
       if (editingId) {
-        await api.put(`/productos/${editingId}`, formData);
+        await api.put(`/productos/${editingId}`, payload);
       } else {
-        await api.post('/productos', formData);
+        await api.post('/productos', payload);
       }
       setShowModal(false);
       loadData();
     } catch (err) {
       console.error(err);
       if (editingId) {
-        setProductos((prev) => prev.map((p) => (p.id === editingId ? { ...p, ...formData } : p)));
+        setProductos((prev) => prev.map((p) => (p.id === editingId ? { ...p, ...payload } : p)));
       } else {
-        setProductos((prev) => [...prev, { id: Date.now(), ...formData }]);
+        setProductos((prev) => [...prev, { id: Date.now(), ...payload }]);
       }
       setShowModal(false);
     }
@@ -166,7 +182,7 @@ export default function ProductosCatalogoPage() {
                 <th>Stock Total</th>
                 <th>Stock por Almacén</th>
                 <th>Stock Mínimo</th>
-                <th>Costo Unitario Prom.</th>
+                <th>Último Precio Compra</th>
                 <th>Estado Stock</th>
                 <th>Acciones</th>
               </tr>
@@ -185,6 +201,12 @@ export default function ProductosCatalogoPage() {
                   ? (item.almacenes.find((a) => a.id === 2 || String(a.codigo) === 'ALM-03')?.pivot?.stock ?? 0)
                   : 0;
 
+                const ultimoPrecio = Number(
+                  item.ultimo_precio_compra !== undefined && item.ultimo_precio_compra !== null
+                    ? item.ultimo_precio_compra
+                    : (item.costo_unitario || item.precio_costo || 0)
+                );
+
                 return (
                   <tr key={item.id}>
                     <td><strong style={{ color: '#2563eb', fontFamily: 'monospace' }}>{item.sku}</strong></td>
@@ -195,6 +217,26 @@ export default function ProductosCatalogoPage() {
                       <strong style={{ color: esStockBajo ? '#dc2626' : '#0f172a', fontSize: '15px' }}>
                         {item.stock_actual}
                       </strong>
+                      {item.maneja_conversion && item.stock_equivalente && (
+                        <div style={{ marginTop: '3px' }}>
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              fontSize: '11px',
+                              fontWeight: '700',
+                              color: '#1d4ed8',
+                              background: '#eff6ff',
+                              border: '1px solid #bfdbfe',
+                              borderRadius: '4px',
+                              padding: '2px 6px',
+                              whiteSpace: 'nowrap',
+                            }}
+                            title={`Equivalencia en empaque secundario (Factor: ${Number(item.factor_conversion || 1)})`}
+                          >
+                            📦 {item.stock_equivalente}
+                          </span>
+                        </div>
+                      )}
                     </td>
                     <td>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', fontSize: '11.5px' }}>
@@ -208,8 +250,8 @@ export default function ProductosCatalogoPage() {
                     </td>
                     <td style={{ color: '#64748b' }}>{item.stock_minimo}</td>
                     <td>
-                      <strong style={{ color: '#059669' }}>
-                        S/ {Number(item.costo_unitario || item.precio_costo || 0).toFixed(2)}
+                      <strong style={{ color: '#059669', fontSize: '13.5px' }}>
+                        S/ {ultimoPrecio.toFixed(2)}
                       </strong>
                     </td>
                     <td>
@@ -291,7 +333,7 @@ export default function ProductosCatalogoPage() {
                   </div>
 
                   <div className="form-group">
-                    <label>Unidad de Medida</label>
+                    <label>Unidad de Medida (Base)</label>
                     <select
                       value={formData.unidades_medida_id}
                       onChange={(e) => setFormData({ ...formData, unidades_medida_id: e.target.value })}
@@ -301,6 +343,68 @@ export default function ProductosCatalogoPage() {
                       ))}
                     </select>
                   </div>
+                </div>
+
+                {/* SECCIÓN UNIDAD DE CONVERSIÓN / DOBLE UNIDAD */}
+                <div style={{ background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '16px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: '700', color: '#0f172a', fontSize: '13.5px', userSelect: 'none' }}>
+                    <input
+                      type="checkbox"
+                      checked={formData.maneja_conversion}
+                      onChange={(e) => setFormData({ ...formData, maneja_conversion: e.target.checked })}
+                      style={{ width: '17px', height: '17px', accentColor: '#2563eb', cursor: 'pointer' }}
+                    />
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Layers size={16} color="#2563eb" /> Maneja Unidad de Conversión / Presentación Superior
+                    </span>
+                  </label>
+                  <p style={{ margin: '4px 0 0 25px', fontSize: '12px', color: '#64748b' }}>
+                    El stock se audita en unidades base y se calcula dinámicamente en empaques superiores (ej. Cajas, Blíster, Pallets).
+                  </p>
+
+                  {formData.maneja_conversion && (
+                    <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed #cbd5e1', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label style={{ fontSize: '12.5px', fontWeight: '600', color: '#334155' }}>
+                          Unidad Secundaria / Empaque *
+                        </label>
+                        <select
+                          value={formData.unidad_secundaria_id}
+                          onChange={(e) => setFormData({ ...formData, unidad_secundaria_id: e.target.value })}
+                          required={formData.maneja_conversion}
+                          style={{ background: '#ffffff' }}
+                        >
+                          <option value="">-- Seleccionar (ej. Caja) --</option>
+                          {unidades
+                            .filter((u) => u.id !== Number(formData.unidades_medida_id))
+                            .map((u) => (
+                              <option key={u.id} value={u.id}>
+                                {u.nombre} ({u.simbolo || 'U'})
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+
+                      <div className="form-group" style={{ margin: 0 }}>
+                        <label style={{ fontSize: '12.5px', fontWeight: '600', color: '#334155' }}>
+                          Factor de Conversión *
+                        </label>
+                        <input
+                          type="number"
+                          step="1"
+                          min="1"
+                          required={formData.maneja_conversion}
+                          placeholder="Ej. 10"
+                          value={formData.factor_conversion}
+                          onChange={(e) => setFormData({ ...formData, factor_conversion: e.target.value })}
+                          style={{ background: '#ffffff' }}
+                        />
+                        <span style={{ fontSize: '11px', color: '#2563eb', marginTop: '4px', display: 'block', fontWeight: '600' }}>
+                          1 {unidades.find((u) => u.id === Number(formData.unidad_secundaria_id))?.nombre || 'Empaque'} = {formData.factor_conversion || 1} {unidades.find((u) => u.id === Number(formData.unidades_medida_id))?.nombre || 'Unidades base'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="form-row">
@@ -327,7 +431,7 @@ export default function ProductosCatalogoPage() {
 
                 <div className="form-group" style={{ background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#0f172a' }}>
-                    <Info size={16} color="#2563eb" /> Costo Unitario Promedio (S/)
+                    <Info size={16} color="#2563eb" /> Costo / Precio Referencial Inicial (S/)
                   </label>
                   <input
                     type="number"
@@ -338,7 +442,7 @@ export default function ProductosCatalogoPage() {
                     onChange={(e) => setFormData({ ...formData, costo_unitario: e.target.value })}
                   />
                   <small style={{ color: '#64748b', marginTop: '4px', fontSize: '11.5px' }}>
-                    * El costo unitario se actualizará automáticamente con cada Nota de Ingreso y Orden de Compra aprobada.
+                    * En la tabla del catálogo se reflejará automáticamente el último precio de compra real registrado en las Notas de Ingreso.
                   </small>
                 </div>
               </div>

@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, UserCheck, Phone, Mail, Edit, Trash2, X, Check, Building2, Briefcase, Eye, Download, PackageCheck, FileText } from 'lucide-react';
+import { Plus, Search, UserCheck, Phone, Mail, Edit, Trash2, X, Check, Building2, Briefcase, Eye, Download, PackageCheck, FileText, Warehouse } from 'lucide-react';
 import api from '../../services/api';
 import '../pagesCommon.css';
 
 export default function PersonalPage() {
   const [personal, setPersonal] = useState([]);
+  const [almacenes, setAlmacenes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
@@ -25,17 +26,29 @@ export default function PersonalPage() {
     email: '',
     telefono: '',
     estado: 'activo',
+    almacen_id: '',
   });
 
   const mockPersonal = [
-    { id: 1, dni: '45892104', nombres: 'Juan Carlos', apellidos: 'Pérez Ramos', cargo: 'Ingeniero de Campo', area: 'Mantenimiento Eléctrico', email: 'jperez@empresa.com', telefono: '984123890', estado: 'activo' },
-    { id: 2, dni: '70192384', nombres: 'Maria Elena', apellidos: 'Gómez Salcedo', cargo: 'Técnico de Telecomunicaciones', area: 'Telecomunicaciones & Redes', email: 'mgomez@empresa.com', telefono: '912345600', estado: 'activo' },
-    { id: 3, dni: '10293847', nombres: 'Pedro Luis', apellidos: 'Ramírez Castillo', cargo: 'Supervisor de Operaciones', area: 'Servicios Generales', email: 'pramirez@empresa.com', telefono: '977112233', estado: 'activo' },
+    { id: 1, dni: '45892104', nombres: 'Juan Carlos', apellidos: 'Pérez Ramos', cargo: 'Ingeniero de Campo', area: 'Mantenimiento Eléctrico', email: 'jperez@empresa.com', telefono: '984123890', estado: 'activo', almacen: { id: 1, nombre: 'Almacén Principal' } },
+    { id: 2, dni: '70192384', nombres: 'Maria Elena', apellidos: 'Gómez Salcedo', cargo: 'Técnico de Telecomunicaciones', area: 'Telecomunicaciones & Redes', email: 'mgomez@empresa.com', telefono: '912345600', estado: 'activo', almacen: { id: 2, nombre: 'Planta 3' } },
+    { id: 3, dni: '10293847', nombres: 'Pedro Luis', apellidos: 'Ramírez Castillo', cargo: 'Supervisor de Operaciones', area: 'Servicios Generales', email: 'pramirez@empresa.com', telefono: '977112233', estado: 'activo', almacen: { id: 1, nombre: 'Almacén Principal' } },
   ];
 
   useEffect(() => {
     fetchPersonal();
+    fetchAlmacenes();
   }, []);
+
+  const fetchAlmacenes = async () => {
+    try {
+      const res = await api.get('/almacenes');
+      const data = res.data?.data || res.data || [];
+      setAlmacenes(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.warn('Error al cargar almacenes:', err);
+    }
+  };
 
   const fetchPersonal = async () => {
     try {
@@ -67,6 +80,7 @@ export default function PersonalPage() {
         email: item.email || '',
         telefono: item.telefono || '',
         estado: item.estado || 'activo',
+        almacen_id: item.almacen_id ? String(item.almacen_id) : (item.almacen?.id ? String(item.almacen.id) : ''),
       });
     } else {
       setEditingId(null);
@@ -79,6 +93,7 @@ export default function PersonalPage() {
         email: '',
         telefono: '',
         estado: 'activo',
+        almacen_id: '',
       });
     }
     setShowModal(true);
@@ -86,20 +101,26 @@ export default function PersonalPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const payload = {
+      ...formData,
+      almacen_id: formData.almacen_id ? Number(formData.almacen_id) : null,
+    };
     try {
       if (editingId) {
-        await api.put(`/personal/${editingId}`, formData);
+        await api.put(`/personal/${editingId}`, payload);
       } else {
-        await api.post('/personal', formData);
+        await api.post('/personal', payload);
       }
       setShowModal(false);
       fetchPersonal();
     } catch (err) {
       console.error(err);
       if (editingId) {
-        setPersonal((prev) => prev.map((p) => (p.id === editingId ? { ...p, ...formData } : p)));
+        const matchingAlm = almacenes.find((a) => a.id === payload.almacen_id);
+        setPersonal((prev) => prev.map((p) => (p.id === editingId ? { ...p, ...payload, almacen: matchingAlm } : p)));
       } else {
-        setPersonal((prev) => [...prev, { id: Date.now(), ...formData }]);
+        const matchingAlm = almacenes.find((a) => a.id === payload.almacen_id);
+        setPersonal((prev) => [...prev, { id: Date.now(), ...payload, almacen: matchingAlm }]);
       }
       setShowModal(false);
     }
@@ -183,6 +204,7 @@ export default function PersonalPage() {
                 <th>Apellidos y Nombres</th>
                 <th>Cargo</th>
                 <th>Área / Depto</th>
+                <th>Planta / Almacén</th>
                 <th>Contacto</th>
                 <th>Estado</th>
                 <th>Acciones</th>
@@ -208,6 +230,30 @@ export default function PersonalPage() {
                     <span className="badge badge-info" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                       <Building2 size={12} /> {item.area || 'General'}
                     </span>
+                  </td>
+                  <td>
+                    {item.almacen ? (
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                          fontSize: '12px',
+                          fontWeight: '600',
+                          background: item.almacen.id === 1 ? '#f0fdf4' : '#faf5ff',
+                          color: item.almacen.id === 1 ? '#15803d' : '#7e22ce',
+                          border: `1px solid ${item.almacen.id === 1 ? '#bbf7d0' : '#e9d5ff'}`,
+                        }}
+                      >
+                        <Warehouse size={13} /> {item.almacen.nombre}
+                      </span>
+                    ) : (
+                      <span style={{ color: '#94a3b8', fontSize: '12px', fontStyle: 'italic' }}>
+                        Sin Asignar
+                      </span>
+                    )}
                   </td>
                   <td>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '12px' }}>
@@ -252,7 +298,7 @@ export default function PersonalPage() {
       {/* MODAL CREAR / EDITAR TRABAJADOR */}
       {showModal && (
         <div className="modal-overlay">
-          <div className="modal-card" style={{ maxWidth: '600px' }}>
+          <div className="modal-card" style={{ maxWidth: '620px' }}>
             <div className="modal-header">
               <h3>{editingId ? 'Editar Trabajador' : 'Registrar Nuevo Trabajador'}</h3>
               <button className="modal-close-btn" onClick={() => setShowModal(false)}><X size={18} /></button>
@@ -260,7 +306,7 @@ export default function PersonalPage() {
             <form onSubmit={handleSubmit}>
               <div className="modal-body">
                 <div className="form-row">
-                  <div className="form-group">
+                  <div className="form-group" style={{ flex: 1 }}>
                     <label>DNI / Documento</label>
                     <input
                       type="text"
@@ -271,7 +317,23 @@ export default function PersonalPage() {
                       onChange={(e) => setFormData({ ...formData, dni: e.target.value })}
                     />
                   </div>
-                  <div className="form-group">
+                  <div className="form-group" style={{ flex: 1.2 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Warehouse size={14} color="#2563eb" /> Planta / Almacén
+                    </label>
+                    <select
+                      value={formData.almacen_id}
+                      onChange={(e) => setFormData({ ...formData, almacen_id: e.target.value })}
+                    >
+                      <option value="">-- Sin Asignar / General --</option>
+                      {almacenes.map((alm) => (
+                        <option key={alm.id} value={alm.id}>
+                          {alm.nombre} ({alm.codigo})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ flex: 0.8 }}>
                     <label>Estado</label>
                     <select
                       value={formData.estado}

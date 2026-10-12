@@ -14,7 +14,7 @@ class PersonalController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Personal::with('rol');
+        $query = Personal::with(['rol', 'almacen']);
 
         if ($request->filled('buscar')) {
             $buscar = $request->input('buscar');
@@ -51,6 +51,7 @@ class PersonalController extends Controller
             'telefono' => 'nullable|string|max:20',
             'estado' => 'nullable|in:activo,suspendido,inactivo',
             'rol_id' => 'nullable|exists:roles,id',
+            'almacen_id' => 'nullable|exists:almacenes,id',
         ]);
 
         $dni = $validated['dni'];
@@ -66,7 +67,10 @@ class PersonalController extends Controller
             'telefono' => $validated['telefono'] ?? null,
             'estado' => $validated['estado'] ?? 'activo',
             'rol_id' => $validated['rol_id'] ?? null,
+            'almacen_id' => $validated['almacen_id'] ?? null,
         ]);
+
+        $trabajador->load(['rol', 'almacen']);
 
         return response()->json([
             'status' => 'success',
@@ -80,7 +84,7 @@ class PersonalController extends Controller
      */
     public function show(string $id): JsonResponse
     {
-        $trabajador = Personal::with('rol')->find($id);
+        $trabajador = Personal::with(['rol', 'almacen'])->find($id);
 
         if (!$trabajador) {
             return response()->json([
@@ -119,6 +123,7 @@ class PersonalController extends Controller
             'telefono' => 'nullable|string|max:20',
             'estado' => 'nullable|in:activo,suspendido,inactivo',
             'rol_id' => 'nullable|exists:roles,id',
+            'almacen_id' => 'nullable|exists:almacenes,id',
         ]);
 
         if (isset($validated['dni'])) {
@@ -126,6 +131,7 @@ class PersonalController extends Controller
         }
 
         $trabajador->update($validated);
+        $trabajador->load(['rol', 'almacen']);
 
         return response()->json([
             'status' => 'success',

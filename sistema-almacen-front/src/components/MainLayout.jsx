@@ -24,6 +24,7 @@ import {
   Warehouse,
   ShieldAlert,
   Sparkles,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   MENU_ITEMS,
@@ -52,6 +53,7 @@ const iconMap = {
   Truck,
   Users,
   BarChart3,
+  AlertTriangle,
 };
 
 const renderIcon = (iconName) => {
@@ -142,8 +144,8 @@ export default function MainLayout({ children }) {
           </div>
           {!collapsed && (
             <div className="brand-info">
-              <span className="brand-title">LOGÍSTICA & STOCK</span>
-              <span className="brand-subtitle">Gestión Integral</span>
+              <span className="brand-title">FENIX</span>
+              <span className="brand-subtitle">Sistema Almacén</span>
             </div>
           )}
         </div>
@@ -187,9 +189,8 @@ export default function MainLayout({ children }) {
                         <Link
                           key={child.id}
                           to={child.path}
-                          className={`sub-nav-item ${
-                            location.pathname === child.path ? 'active' : ''
-                          }`}
+                          className={`sub-nav-item ${location.pathname === child.path ? 'active' : ''
+                            }`}
                         >
                           {renderIcon(child.icon)}
                           <span>{child.title}</span>

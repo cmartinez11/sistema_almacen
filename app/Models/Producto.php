@@ -21,6 +21,13 @@ class Producto extends Model
         'stock_actual',
         'stock_minimo',
         'costo_unitario',
+        'maneja_conversion',
+        'unidad_secundaria_id',
+        'factor_conversion',
+    ];
+
+    protected $appends = [
+        'stock_equivalente',
     ];
 
     protected function casts(): array
@@ -29,6 +36,8 @@ class Producto extends Model
             'stock_actual' => 'decimal:4',
             'stock_minimo' => 'decimal:4',
             'costo_unitario' => 'decimal:4',
+            'maneja_conversion' => 'boolean',
+            'factor_conversion' => 'decimal:4',
         ];
     }
 
@@ -40,6 +49,43 @@ class Producto extends Model
     public function unidadMedida(): BelongsTo
     {
         return $this->belongsTo(UnidadMedida::class, 'unidades_medida_id');
+    }
+
+    public function unidadSecundaria(): BelongsTo
+    {
+        return $this->belongsTo(UnidadMedida::class, 'unidad_secundaria_id');
+    }
+
+    /**
+     * Calcula la representación legible del stock con doble unidad cuando maneja_conversion está activo.
+     * Ejemplo: "2 Caja(s) y 5 Paquete(s)"
+     */
+    public function getStockEquivalenteAttribute(): string
+    {
+        $stock = (float) $this->stock_actual;
+        $simboloBase = $this->unidadMedida?->simbolo ?? $this->unidadMedida?->nombre ?? 'und';
+
+        if (!$this->maneja_conversion || !$this->unidad_secundaria_id || (float) $this->factor_conversion <= 1) {
+            return number_format($stock, 2) . ' ' . $simboloBase;
+        }
+
+        $factor = (float) $this->factor_conversion;
+        $unidadesSecundarias = floor($stock / $factor);
+        $restoBase = fmod($stock, $factor);
+
+        $nombreSecundaria = $this->unidadSecundaria?->nombre ?? $this->unidadSecundaria?->simbolo ?? 'Caja';
+        $nombreBase = $this->unidadMedida?->nombre ?? $simboloBase;
+
+        $partes = [];
+        if ($unidadesSecundarias > 0) {
+            $partes[] = (int) $unidadesSecundarias . ' ' . $nombreSecundaria . ($unidadesSecundarias > 1 ? '(s)' : '');
+        }
+
+        if ($restoBase > 0 || empty($partes)) {
+            $partes[] = (int) $restoBase . ' ' . $nombreBase . ($restoBase > 1 ? '(s)' : '');
+        }
+
+        return implode(' y ', $partes);
     }
 
     public function entradasDetalle(): HasMany
