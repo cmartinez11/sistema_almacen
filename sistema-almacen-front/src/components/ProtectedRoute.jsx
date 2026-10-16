@@ -17,7 +17,14 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
 
   // Verificar RBAC si la ruta especifica roles permitidos
   if (allowedRoles && !hasPermission(user, allowedRoles)) {
-    return <Navigate to="/unauthorized" replace />;
+
+    const rolStr = (user?.rol?.nombre || user?.role || user?.rol || '').toUpperCase();
+
+    const rutaDestino = (rolStr.includes('SOLICITANTE') || rolStr.includes('RESPONSABLE'))
+      ? '/solicitudes-area'
+      : '/dashboard';
+
+    return <Navigate to={rutaDestino} replace />;
   }
 
   return children;

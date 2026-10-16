@@ -32,7 +32,7 @@ export const ROLE_BADGE_COLORS = {
 export const normalizeRole = (user) => {
   if (!user) return '';
   let roleStr = '';
-  
+
   if (typeof user.rol === 'string') {
     roleStr = user.rol;
   } else if (user.rol?.nombre) {
@@ -131,7 +131,7 @@ export const MENU_ITEMS = [
     title: 'Solicitudes de Área (E-commerce)',
     icon: 'ShoppingBag',
     path: '/solicitudes-area',
-    allowedRoles: [ROLES.RESPONSABLE_AREA, ROLES.ADMINISTRADOR, ROLES.COMPRAS, ROLES.ALMACENERO],
+    allowedRoles: [ROLES.RESPONSABLE_AREA, ROLES.ADMINISTRADOR, ROLES.COMPRAS, ROLES.SUPERVISOR],
   },
   {
     id: 'dashboard',
@@ -217,7 +217,7 @@ export const MENU_ITEMS = [
     title: 'Proveedores',
     icon: 'Truck',
     path: '/proveedores',
-    allowedRoles: [ROLES.ADMINISTRADOR, ROLES.COMPRAS, ROLES.ALMACENERO],
+    allowedRoles: [ROLES.ADMINISTRADOR, ROLES.COMPRAS],
   },
   {
     id: 'personal',
