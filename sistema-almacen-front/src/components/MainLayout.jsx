@@ -24,7 +24,6 @@ import {
   Warehouse,
   ShieldAlert,
   ShieldCheck,
-  Sparkles,
   AlertTriangle,
   ShoppingBag,
   ShoppingCart,
@@ -286,22 +285,6 @@ export default function MainLayout({ children }) {
     }
   };
 
-  const handleRoleChange = (e) => {
-    const newRole = e.target.value;
-    const updatedUser = { 
-      ...user, 
-      rol: { nombre: newRole }, 
-      role: newRole,
-      area: newRole === ROLES.RESPONSABLE_AREA ? (user.area || 'Sistemas') : user.area,
-    };
-    localStorage.setItem('user', JSON.stringify(updatedUser));
-    window.dispatchEvent(new Event('storage'));
-    window.dispatchEvent(new CustomEvent('roleChanged', { detail: newRole }));
-    if (newRole === ROLES.RESPONSABLE_AREA) {
-      navigate('/solicitudes-area');
-    }
-  };
-
   const handleLogout = async () => {
     try {
       await api.post('/logout');
@@ -399,28 +382,6 @@ export default function MainLayout({ children }) {
             );
           })}
         </nav>
-
-        <div className="sidebar-footer">
-          {!collapsed && (
-            <div className="role-switcher-box">
-              <div className="role-switcher-title" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <Sparkles size={12} color="#38bdf8" /> Probador de Rol RBAC:
-              </div>
-              <select
-                className="role-select"
-                value={currentRole}
-                onChange={handleRoleChange}
-              >
-                <option value={ROLES.ADMINISTRADOR}>👑 Administrador</option>
-                <option value={ROLES.ALMACENERO}>📦 Almacenero</option>
-                <option value={ROLES.SUPERVISOR}>🔍 Supervisor</option>
-                <option value={ROLES.COMPRAS}>🛒 Compras</option>
-                <option value={ROLES.GERENCIA}>📊 Gerencia</option>
-                <option value={ROLES.RESPONSABLE_AREA}>🛍️ Responsable de Área</option>
-              </select>
-            </div>
-          )}
-        </div>
       </aside>
 
       <div className={`main-wrapper ${collapsed ? 'sidebar-collapsed' : ''}`}>

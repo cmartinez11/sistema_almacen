@@ -721,4 +721,357 @@ class KardexController extends Controller
 
         return $pdf->download($filename);
     }
+
+    /**
+     * Obtener el resumen físico general de existencias para todo el catálogo (Solo Cantidades).
+     * Accesible para todos los roles con permisos de almacén (Almacenero, Supervisor, Compras, Admin).
+     */
+    public function getFisicoResumen(\Illuminate\Http\Request $request): JsonResponse
+    {
+        $almacenId = $request->input('almacen_id');
+
+        $productos = Producto::with(['categoria', 'unidadMedida', 'almacenes'])->get();
+
+        // Consultar acumulados de entradas y salidas desde la tabla kardex para alto rendimiento
+        $kardexTotalsQuery = Kardex::query();
+        if ($almacenId) {
+            $kardexTotalsQuery->where('almacen_id', $almacenId);
+        }
+        $kardexTotals = $kardexTotalsQuery
+            ->selectRaw("
+                producto_id,
+                SUM(CASE WHEN UPPER(tipo_operacion) IN ('ENTRADA', 'TRANSFERENCIA_ENTRADA', 'INGRESO', 'AJUSTE_POSITIVO', 'SALDO_INICIAL', 'COMPRA') THEN cantidad_movimiento ELSE 0 END) as total_entradas,
+                SUM(CASE WHEN UPPER(tipo_operacion) NOT IN ('ENTRADA', 'TRANSFERENCIA_ENTRADA', 'INGRESO', 'AJUSTE_POSITIVO', 'SALDO_INICIAL', 'COMPRA') THEN cantidad_movimiento ELSE 0 END) as total_salidas
+            ")
+            ->groupBy('producto_id')
+            ->get()
+            ->keyBy('producto_id');
+
+        $resumen = [];
+        $totalUnidades = 0;
+        $totalEntradasGlobal = 0;
+        $totalSalidasGlobal = 0;
+
+        foreach ($productos as $p) {
+            $stock = (float) $p->stock_actual;
+
+            if ($almacenId) {
+                $pivot = $p->almacenes->where('id', $almacenId)->first();
+                if ($pivot && $pivot->pivot) {
+                    $stock = (float) $pivot->pivot->stock;
+                } else {
+                    $stock = 0;
+                }
+            }
+
+            $totals = $kardexTotals->get($p->id);
+            $totalEntradas = $totals ? (float) $totals->total_entradas : 0.0;
+            $totalSalidas = $totals ? (float) $totals->total_salidas : 0.0;
+
+            // Si kardex está vacío para este producto pero tiene entradas o salidas en tablas de detalle:
+            if ($totalEntradas == 0 && $totalSalidas == 0) {
+                $eQ = EntradaDetalle::where('producto_id', $p->id);
+                if ($almacenId) {
+                    $eQ->whereHas('entradaCabecera', fn($q) => $q->where('almacen_id', $almacenId));
+                }
+                $totalEntradas = (float) $eQ->sum('cantidad');
+
+                $sQ = SalidaDetalle::where('producto_id', $p->id);
+                if ($almacenId) {
+                    $sQ->whereHas('salidaCabecera', fn($q) => $q->where('almacen_id', $almacenId));
+                }
+                $totalSalidas = (float) $sQ->sum('cantidad');
+            }
+
+            $stockMinimo = (float) ($p->stock_minimo ?? 0);
+            $estado = 'Normal';
+            if ($stock <= 0) {
+                $estado = 'Agotado';
+            } elseif ($stockMinimo > 0 && $stock <= $stockMinimo) {
+                $estado = 'Stock Bajo';
+            }
+
+            $totalUnidades += $stock;
+            $totalEntradasGlobal += $totalEntradas;
+            $totalSalidasGlobal += $totalSalidas;
+
+            $resumen[] = [
+                'id' => $p->id,
+                'sku' => $p->sku,
+                'producto' => $p->nombre,
+                'categoria' => $p->categoria->nombre ?? 'General',
+                'unidad_medida' => $p->unidadMedida->nombre ?? 'UND',
+                'total_entradas' => round($totalEntradas, 2),
+                'total_salidas' => round($totalSalidas, 2),
+                'stock_fisico' => round($stock, 2),
+                'stock_minimo' => round($stockMinimo, 2),
+                'estado_stock' => $estado,
+            ];
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'total_skus' => count($productos),
+                'total_unidades_fisicas' => round($totalUnidades, 2),
+                'total_entradas_global' => round($totalEntradasGlobal, 2),
+                'total_salidas_global' => round($totalSalidasGlobal, 2),
+                'productos' => $resumen,
+            ],
+        ], 200);
+    }
+
+    /**
+     * Exportar reporte oficial de Kardex Físico por Producto en formato PDF (Landscape).
+     * Muestra exclusivamente cantidades y unidades físicas (CERO montos ni soles).
+     */
+    public function exportarKardexFisicoProductoPdf(\Illuminate\Http\Request $request)
+    {
+        $productoId = $request->input('producto_id') ?? $request->route('productoId');
+        if (!$productoId) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Debe especificar el ID del producto.',
+            ], 422);
+        }
+
+        $producto = Producto::with(['categoria', 'unidadMedida', 'almacenes'])->find($productoId);
+        if (!$producto) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Producto no encontrado.',
+            ], 404);
+        }
+
+        $almacenId = $request->input('almacen_id');
+        $almacen = $almacenId ? \App\Models\Almacen::find($almacenId) : null;
+        $nombreAlmacen = $almacen ? "{$almacen->nombre} ({$almacen->codigo})" : 'TODOS LOS ALMACENES (CONSOLIDADO)';
+
+        $calculo = $this->calcularKardexDetalladoProducto($producto, $almacenId ? (int)$almacenId : null);
+        $movimientos = $calculo['movimientos'];
+        $kpis = $calculo['kpis'];
+
+        $skuSlug = strtolower(preg_replace('/[^a-zA-Z0-9]/', '_', $producto->sku));
+        $filename = "kardex_fisico_{$skuSlug}_" . date('Ymd_His') . '.pdf';
+
+        $pdf = Pdf::loadView('pdf.kardex_fisico_producto', [
+            'producto' => $producto,
+            'nombreAlmacen' => $nombreAlmacen,
+            'movimientos' => $movimientos,
+            'kpis' => $kpis,
+        ])->setPaper('a4', 'landscape');
+
+        return $pdf->download($filename);
+    }
+
+    /**
+     * Exportar Kardex Físico por Producto en formato Excel / CSV estructurado (UTF-8 BOM).
+     * Solo cantidades y unidades físicas.
+     */
+    public function exportarKardexFisicoProductoCsv(\Illuminate\Http\Request $request)
+    {
+        $productoId = $request->input('producto_id') ?? $request->route('productoId');
+        if (!$productoId) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Debe especificar el ID del producto.',
+            ], 422);
+        }
+
+        $producto = Producto::with(['categoria', 'unidadMedida', 'almacenes'])->find($productoId);
+        if (!$producto) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Producto no encontrado.',
+            ], 404);
+        }
+
+        $almacenId = $request->input('almacen_id');
+        $almacen = $almacenId ? \App\Models\Almacen::find($almacenId) : null;
+        $nombreAlmacen = $almacen ? "{$almacen->nombre} ({$almacen->codigo})" : 'TODOS LOS ALMACENES (CONSOLIDADO)';
+
+        $calculo = $this->calcularKardexDetalladoProducto($producto, $almacenId ? (int)$almacenId : null);
+        $movimientos = $calculo['movimientos'];
+        $kpis = $calculo['kpis'];
+
+        $skuSlug = strtolower(preg_replace('/[^a-zA-Z0-9]/', '_', $producto->sku));
+        $filename = "kardex_fisico_{$skuSlug}_" . date('Ymd_His') . '.csv';
+
+        $headers = [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+            'Pragma' => 'no-cache',
+            'Cache-Control' => 'must-revalidate, post-check=0, pre-check=0',
+            'Expires' => '0',
+        ];
+
+        $callback = function () use ($producto, $movimientos, $kpis, $nombreAlmacen) {
+            $handle = fopen('php://output', 'w');
+            fputs($handle, "\xEF\xBB\xBF");
+
+            fputcsv($handle, ['SISTEMA DE GESTIÓN DE ALMACÉN - KARDEX FÍSICO POR PRODUCTO'], ';');
+            fputcsv($handle, ['PRODUCTO:', "{$producto->sku} - {$producto->nombre}"], ';');
+            fputcsv($handle, ['CATEGORÍA:', $producto->categoria->nombre ?? 'General', 'UNIDAD MEDIDA:', $producto->unidadMedida->nombre ?? 'UND'], ';');
+            fputcsv($handle, ['ALMACÉN / PLANTA:', $nombreAlmacen], ';');
+            fputcsv($handle, ['FECHA Y HORA DE EMISIÓN:', date('d/m/Y H:i:s')], ';');
+            fputcsv($handle, [], ';');
+
+            fputcsv($handle, [
+                'FECHA Y HORA',
+                'TIPO OPERACIÓN',
+                'N° DOCUMENTO',
+                'SEDE / ALMACÉN',
+                'DETALLE / TERCERO',
+                'ENTRADA CANTIDAD (+)',
+                'SALIDA CANTIDAD (-)',
+                'SALDO FÍSICO ACUMULADO',
+                'UNIDAD DE MEDIDA',
+            ], ';');
+
+            $unidadStr = $producto->unidadMedida->nombre ?? 'UND';
+
+            foreach ($movimientos as $m) {
+                $isEntrada = strtoupper($m['tipo'] ?? '') === 'ENTRADA';
+                $cantIn = (float)($m['entrada_cantidad'] ?? $m['entrada'] ?? 0);
+                $cantOut = (float)($m['salida_cantidad'] ?? $m['salida'] ?? 0);
+                $cantSaldo = (float)($m['saldo_cantidad'] ?? $m['saldo_fisico'] ?? $m['saldo'] ?? 0);
+
+                fputcsv($handle, [
+                    $m['fecha'] ?? '',
+                    $m['tipo'] ?? '',
+                    $m['documento'] ?? $m['doc'] ?? 'S/D',
+                    $m['almacen'] ?? 'Almacén Principal',
+                    $m['detalle'] ?? $m['observacion'] ?? '-',
+                    $isEntrada && $cantIn > 0 ? number_format($cantIn, 2, '.', '') : '0.00',
+                    !$isEntrada && $cantOut > 0 ? number_format($cantOut, 2, '.', '') : '0.00',
+                    number_format($cantSaldo, 2, '.', ''),
+                    $unidadStr,
+                ], ';');
+            }
+
+            fputcsv($handle, [], ';');
+            fputcsv($handle, [
+                'TOTALES ACUMULADOS',
+                '',
+                '',
+                '',
+                '',
+                number_format($kpis['total_entradas_cant'] ?? 0, 2, '.', ''),
+                number_format($kpis['total_salidas_cant'] ?? 0, 2, '.', ''),
+                number_format($kpis['saldo_actual_cant'] ?? 0, 2, '.', ''),
+                $unidadStr,
+            ], ';');
+
+            fclose($handle);
+        };
+
+        return response()->stream($callback, 200, $headers);
+    }
+
+    /**
+     * Exportar Resumen General de Existencias Físicas en formato PDF (Landscape).
+     */
+    public function exportarKardexFisicoGeneralPdf(\Illuminate\Http\Request $request)
+    {
+        $almacenId = $request->input('almacen_id');
+        $almacen = $almacenId ? \App\Models\Almacen::find($almacenId) : null;
+        $nombreAlmacen = $almacen ? "{$almacen->nombre} ({$almacen->codigo})" : 'TODOS LOS ALMACENES (CONSOLIDADO)';
+
+        $response = $this->getFisicoResumen($request);
+        $data = $response->getData(true)['data'];
+
+        $filename = "resumen_existencias_fisicas_" . date('Ymd_His') . '.pdf';
+
+        $pdf = Pdf::loadView('pdf.kardex_fisico_general', [
+            'nombreAlmacen' => $nombreAlmacen,
+            'productos' => $data['productos'],
+            'totalUnidades' => $data['total_unidades_fisicas'],
+            'totalEntradas' => $data['total_entradas_global'],
+            'totalSalidas' => $data['total_salidas_global'],
+        ])->setPaper('a4', 'landscape');
+
+        return $pdf->download($filename);
+    }
+
+    /**
+     * Exportar Resumen General de Existencias Físicas en formato Excel / CSV (UTF-8 BOM).
+     */
+    public function exportarKardexFisicoGeneralCsv(\Illuminate\Http\Request $request)
+    {
+        $almacenId = $request->input('almacen_id');
+        $almacen = $almacenId ? \App\Models\Almacen::find($almacenId) : null;
+        $nombreAlmacen = $almacen ? "{$almacen->nombre} ({$almacen->codigo})" : 'TODOS LOS ALMACENES (CONSOLIDADO)';
+
+        $response = $this->getFisicoResumen($request);
+        $data = $response->getData(true)['data'];
+        $productos = $data['productos'];
+
+        $filename = "resumen_existencias_fisicas_" . date('Ymd_His') . '.csv';
+
+        $headers = [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+            'Pragma' => 'no-cache',
+            'Cache-Control' => 'must-revalidate, post-check=0, pre-check=0',
+            'Expires' => '0',
+        ];
+
+        $callback = function () use ($productos, $nombreAlmacen, $data) {
+            $handle = fopen('php://output', 'w');
+            fputs($handle, "\xEF\xBB\xBF");
+
+            fputcsv($handle, ['SISTEMA DE GESTIÓN DE ALMACÉN - RESUMEN GENERAL DE EXISTENCIAS FÍSICAS'], ';');
+            fputcsv($handle, ['ALMACÉN / SEDE:', $nombreAlmacen], ';');
+            fputcsv($handle, ['FECHA Y HORA DE EMISIÓN:', date('d/m/Y H:i:s')], ';');
+            fputcsv($handle, [], ';');
+
+            fputcsv($handle, [
+                'N°',
+                'CÓDIGO SKU',
+                'DESCRIPCIÓN DEL PRODUCTO',
+                'CATEGORÍA',
+                'UNIDAD DE MEDIDA',
+                'TOTAL ENTRADAS (+)',
+                'TOTAL SALIDAS (-)',
+                'STOCK FÍSICO ACTUAL',
+                'STOCK MÍNIMO',
+                'ESTADO DE STOCK',
+            ], ';');
+
+            $i = 1;
+            foreach ($productos as $p) {
+                fputcsv($handle, [
+                    $i++,
+                    $p['sku'],
+                    $p['producto'],
+                    $p['categoria'],
+                    $p['unidad_medida'],
+                    number_format($p['total_entradas'], 2, '.', ''),
+                    number_format($p['total_salidas'], 2, '.', ''),
+                    number_format($p['stock_fisico'], 2, '.', ''),
+                    number_format($p['stock_minimo'], 2, '.', ''),
+                    $p['estado_stock'],
+                ], ';');
+            }
+
+            fputcsv($handle, [], ';');
+            fputcsv($handle, [
+                'TOTALES GENERALES',
+                '',
+                '',
+                '',
+                '',
+                number_format($data['total_entradas_global'], 2, '.', ''),
+                number_format($data['total_salidas_global'], 2, '.', ''),
+                number_format($data['total_unidades_fisicas'], 2, '.', ''),
+                '',
+                '',
+            ], ';');
+
+            fclose($handle);
+        };
+
+        return response()->stream($callback, 200, $headers);
+    }
 }
+

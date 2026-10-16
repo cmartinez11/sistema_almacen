@@ -88,6 +88,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('kardex/valorizado', [KardexController::class, 'getValorizadoResumen']);
     Route::get('kardex/valorizado/exportar', [KardexController::class, 'exportValorizadoCsv']);
     Route::get('reportes/kardex-valorizado/exportar', [KardexController::class, 'exportValorizadoCsv']);
+
+    // Kardex Físico (Control Operativo de Existencias en Unidades - Cero Montos)
+    Route::get('kardex/fisico/resumen', [KardexController::class, 'getFisicoResumen']);
+    Route::get('reportes/kardex-fisico/resumen', [KardexController::class, 'getFisicoResumen']);
+    Route::get('reportes/kardex-fisico-producto/pdf', [KardexController::class, 'exportarKardexFisicoProductoPdf']);
+    Route::get('reportes/kardex-fisico-producto/exportar', [KardexController::class, 'exportarKardexFisicoProductoCsv']);
+    Route::get('reportes/kardex-fisico-general/pdf', [KardexController::class, 'exportarKardexFisicoGeneralPdf']);
+    Route::get('reportes/kardex-fisico-general/exportar', [KardexController::class, 'exportarKardexFisicoGeneralCsv']);
 });
 
 // Rutas Directas de Respaldo para desarrollo y pruebas de clientes API
@@ -136,3 +144,11 @@ Route::get('reportes/kardex-valorizado/pdf', [KardexController::class, 'exportar
 Route::get('kardex/valorizado', [KardexController::class, 'getValorizadoResumen']);
 Route::get('kardex/valorizado/exportar', [KardexController::class, 'exportValorizadoCsv']);
 Route::get('reportes/kardex-valorizado/exportar', [KardexController::class, 'exportValorizadoCsv']);
+
+// Kardex Físico (Control Operativo de Existencias en Unidades - Cero Montos)
+Route::get('kardex/fisico/resumen', [KardexController::class, 'getFisicoResumen']);
+Route::get('reportes/kardex-fisico/resumen', [KardexController::class, 'getFisicoResumen']);
+Route::get('reportes/kardex-fisico-producto/pdf', [KardexController::class, 'exportarKardexFisicoProductoPdf']);
+Route::get('reportes/kardex-fisico-producto/exportar', [KardexController::class, 'exportarKardexFisicoProductoCsv']);
+Route::get('reportes/kardex-fisico-general/pdf', [KardexController::class, 'exportarKardexFisicoGeneralPdf']);
+Route::get('reportes/kardex-fisico-general/exportar', [KardexController::class, 'exportarKardexFisicoGeneralCsv']);
