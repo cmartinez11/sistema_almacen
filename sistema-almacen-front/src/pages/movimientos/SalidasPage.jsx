@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, ArrowUpRight, UserCheck, Eye, X, Check, Trash2, Search, AlertCircle, FileText, Building2, Tag } from 'lucide-react';
+import { Plus, ArrowUpRight, UserCheck, Eye, X, Check, Trash2, Search, AlertCircle, FileText, Building2, Tag, Package, ShoppingCart, Minus } from 'lucide-react';
 import api from '../../services/api';
+import { obtenerImagenProducto, handleProductImageError } from '../../utils/productImages';
 import '../pagesCommon.css';
 
 export default function SalidasPage() {
@@ -17,6 +18,12 @@ export default function SalidasPage() {
   const [workerSearch, setWorkerSearch] = useState('');
   const [showWorkerDropdown, setShowWorkerDropdown] = useState(false);
   const workerDropdownRef = useRef(null);
+
+  // Estados para modal secundario de catálogo e-commerce
+  const [showCatalogModal, setShowCatalogModal] = useState(false);
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [catalogCategory, setCatalogCategory] = useState('all');
+  const [tempDetalles, setTempDetalles] = useState([]);
 
   // Formulario cabecera
   const [formHeader, setFormHeader] = useState({
@@ -87,6 +94,9 @@ export default function SalidasPage() {
     }
     return Number(prod.stock_actual || 0);
   };
+
+  // Helper compartido de imágenes de producto
+  const getProductImage = obtenerImagenProducto;
 
   const loadInitialData = async () => {
     try {
@@ -173,10 +183,28 @@ export default function SalidasPage() {
     ])
   ).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
 
+  // Catálogo de categorías
+  const catalogCategories = Array.from(
+    new Set(productosList.map((p) => p.categoria?.nombre).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b, 'es'));
+
+  // Filtro dinámico de productos en el sub-modal de catálogo e-commerce
+  const filteredCatalogProducts = productosList.filter((prod) => {
+    const matchesCategory =
+      catalogCategory === 'all' || prod.categoria?.nombre === catalogCategory;
+    if (!matchesCategory) return false;
+
+    if (!catalogSearch.trim()) return true;
+    const term = catalogSearch.toLowerCase().trim();
+    const sku = (prod.sku || '').toLowerCase();
+    const nombre = (prod.nombre || '').toLowerCase();
+    const cat = (prod.categoria?.nombre || '').toLowerCase();
+    return sku.includes(term) || nombre.includes(term) || cat.includes(term);
+  });
+
   const handleOpenModal = () => {
     setErrorMsg('');
     const defaultAlm = almacenes[0]?.id || 1;
-    const firstProd = productosList[0];
 
     setFormHeader({
       almacen_id: defaultAlm,
@@ -188,11 +216,101 @@ export default function SalidasPage() {
     });
     setWorkerSearch('');
     setShowWorkerDropdown(false);
-
-    setDetalles([
-      { producto_id: firstProd?.id || '', cantidad: 1, stock_disponible: getStockForWarehouse(firstProd, defaultAlm) },
-    ]);
+    setDetalles([]);
     setShowModal(true);
+  };
+
+  const handleOpenCatalog = () => {
+    setTempDetalles([...detalles]);
+    setCatalogSearch('');
+    setCatalogCategory('all');
+    setShowCatalogModal(true);
+  };
+
+  const handleCatalogAdd = (prod, initialQty = 1) => {
+    const stockAvailable = getStockForWarehouse(prod, formHeader.almacen_id);
+    if (stockAvailable <= 0) return;
+    const validQty = Math.min(initialQty, stockAvailable);
+
+    setTempDetalles((prev) => {
+      const exists = prev.find((d) => String(d.producto_id) === String(prod.id));
+      if (exists) {
+        return prev.map((d) =>
+          String(d.producto_id) === String(prod.id)
+            ? { ...d, cantidad: Math.min(d.cantidad + 1, stockAvailable) }
+            : d
+        );
+      }
+      return [
+        ...prev,
+        {
+          producto_id: prod.id,
+          cantidad: validQty,
+          stock_disponible: stockAvailable,
+        },
+      ];
+    });
+  };
+
+  const handleCatalogChangeQty = (prodId, delta, maxStock) => {
+    setTempDetalles((prev) =>
+      prev
+        .map((d) => {
+          if (String(d.producto_id) === String(prodId)) {
+            const nextQty = d.cantidad + delta;
+            if (nextQty <= 0) return null;
+            return { ...d, cantidad: Math.min(nextQty, maxStock) };
+          }
+          return d;
+        })
+        .filter(Boolean)
+    );
+  };
+
+  const handleCatalogSetQty = (prodId, newQty, maxStock) => {
+    if (newQty <= 0) {
+      setTempDetalles((prev) => prev.filter((d) => String(d.producto_id) !== String(prodId)));
+      return;
+    }
+    const safeQty = Math.min(newQty, maxStock);
+    setTempDetalles((prev) =>
+      prev.map((d) =>
+        String(d.producto_id) === String(prodId)
+          ? { ...d, cantidad: safeQty }
+          : d
+      )
+    );
+  };
+
+  const handleConfirmCatalogSelection = () => {
+    setDetalles(
+      tempDetalles.map((d) => {
+        const prod = productosList.find((p) => String(p.id) === String(d.producto_id));
+        return {
+          ...d,
+          stock_disponible: getStockForWarehouse(prod, formHeader.almacen_id),
+        };
+      })
+    );
+    setShowCatalogModal(false);
+  };
+
+  const handleUpdateDetalleQty = (prodId, newQty) => {
+    const prod = productosList.find((p) => String(p.id) === String(prodId));
+    const stock = getStockForWarehouse(prod, formHeader.almacen_id);
+    const safeQty = Math.max(1, Math.min(newQty || 1, stock > 0 ? stock : 1));
+
+    setDetalles((prev) =>
+      prev.map((d) =>
+        String(d.producto_id) === String(prodId)
+          ? { ...d, cantidad: safeQty }
+          : d
+      )
+    );
+  };
+
+  const handleRemoveDetalle = (prodId) => {
+    setDetalles((prev) => prev.filter((d) => String(d.producto_id) !== String(prodId)));
   };
 
   const handleSelectWorker = (worker) => {
@@ -235,35 +353,22 @@ export default function SalidasPage() {
     );
   };
 
-  const handleAddRow = () => {
-    const firstProd = productosList[0];
-    setDetalles([
-      ...detalles,
-      { producto_id: firstProd?.id || '', cantidad: 1, stock_disponible: getStockForWarehouse(firstProd, formHeader.almacen_id) },
-    ]);
-  };
-
-  const handleRemoveRow = (index) => {
-    if (detalles.length === 1) return;
-    setDetalles(detalles.filter((_, i) => i !== index));
-  };
-
-  const handleItemChange = (index, field, value) => {
-    const updated = [...detalles];
-    updated[index][field] = value;
-    if (field === 'producto_id') {
-      const prod = productosList.find((p) => String(p.id) === String(value));
-      updated[index].stock_disponible = getStockForWarehouse(prod, formHeader.almacen_id);
-    }
-    setDetalles(updated);
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMsg('');
 
     if (!formHeader.personal_id) {
       setErrorMsg('Debe buscar y seleccionar un trabajador receptante de la lista desplegable.');
+      return;
+    }
+
+    if (!formHeader.area_destino || !formHeader.area_destino.trim()) {
+      setErrorMsg('Debe seleccionar el Área de Destino o Centro de Costo asignado de la lista oficial.');
+      return;
+    }
+
+    if (detalles.length === 0) {
+      setErrorMsg('Debe seleccionar al menos un producto del catálogo para despachar.');
       return;
     }
 
@@ -664,64 +769,161 @@ export default function SalidasPage() {
                   </div>
                 </div>
 
-                {/* DETALLES DINÁMICOS DE PRODUCTOS A DESPACHAR */}
-                <div style={{ marginTop: '16px', borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                    <h4 style={{ margin: 0, fontSize: '14.5px', color: '#0f172a' }}>Materiales / Insumos a Despachar</h4>
-                    <button type="button" className="secondary-btn" onClick={handleAddRow} style={{ padding: '5px 12px', fontSize: '12px' }}>
-                      <Plus size={14} /> Añadir Ítem
+                {/* BOTÓN PRINCIPAL DE SELECCIÓN Y RESUMEN DE MATERIALES A DESPACHAR */}
+                <div style={{ marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                    <div>
+                      <h4 style={{ margin: 0, fontSize: '15px', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Package size={18} color="#ea580c" /> Materiales / Insumos a Despachar
+                      </h4>
+                      <span style={{ fontSize: '12px', color: '#64748b' }}>
+                        {detalles.length === 0
+                          ? 'Abra el catálogo visual con fotos para añadir los productos a entregar.'
+                          : `${detalles.length} ${detalles.length === 1 ? 'producto seleccionado' : 'productos seleccionados'} para despacho.`}
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleOpenCatalog}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '9px 18px',
+                        background: 'linear-gradient(135deg, #ea580c 0%, #c2410c 100%)',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '13px',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                        boxShadow: '0 4px 12px rgba(234, 88, 12, 0.25)',
+                        transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = 'translateY(-1px)';
+                        e.currentTarget.style.boxShadow = '0 6px 16px rgba(234, 88, 12, 0.35)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = 'translateY(0)';
+                        e.currentTarget.style.boxShadow = '0 4px 12px rgba(234, 88, 12, 0.25)';
+                      }}
+                    >
+                      <ShoppingCart size={17} /> 🛒 Seleccionar Materiales del Catálogo (E-commerce)
+                      {detalles.length > 0 && (
+                        <span style={{ background: '#ffffff', color: '#c2410c', padding: '1px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: '800' }}>
+                          {detalles.length}
+                        </span>
+                      )}
                     </button>
                   </div>
 
-                  {detalles.map((row, idx) => (
-                    <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2.5fr 1fr 1fr 40px', gap: '10px', alignItems: 'center', marginBottom: '10px', background: '#f8fafc', padding: '10px', borderRadius: '8px', border: '1px solid #f1f5f9' }}>
-                      <div>
-                        <label style={{ fontSize: '11px', color: '#64748b', fontWeight: '600' }}>Producto Solicitado</label>
-                        <select
-                          required
-                          value={row.producto_id}
-                          onChange={(e) => handleItemChange(idx, 'producto_id', e.target.value)}
-                          style={{ fontSize: '12.5px' }}
-                        >
-                          <option value="">-- Seleccionar Producto --</option>
-                          {productosList.map((prod) => (
-                            <option key={prod.id} value={prod.id}>
-                              {prod.sku} - {prod.nombre} (Stock Total: {prod.stock_actual})
-                            </option>
-                          ))}
-                        </select>
+                  {/* RESUMEN DE PRODUCTOS SELECCIONADOS */}
+                  {detalles.length === 0 ? (
+                    <div
+                      onClick={handleOpenCatalog}
+                      style={{
+                        textAlign: 'center',
+                        padding: '36px 20px',
+                        background: '#fffaf5',
+                        border: '2px dashed #fdba74',
+                        borderRadius: '12px',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = '#fff7ed';
+                        e.currentTarget.style.borderColor = '#ea580c';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = '#fffaf5';
+                        e.currentTarget.style.borderColor = '#fdba74';
+                      }}
+                    >
+                      <div style={{ width: '46px', height: '46px', borderRadius: '50%', background: '#ffedd5', color: '#ea580c', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>
+                        <ShoppingCart size={22} />
                       </div>
-
-                      <div>
-                        <label style={{ fontSize: '11px', color: '#64748b', fontWeight: '600' }}>Stock en Almacén</label>
-                        <strong style={{ display: 'block', padding: '7px 10px', background: '#ffffff', borderRadius: '6px', fontSize: '13px', border: '1px solid #e2e8f0', color: row.stock_disponible > 0 ? '#16a34a' : '#dc2626' }}>
-                          {row.stock_disponible} u.
-                        </strong>
+                      <div style={{ fontWeight: '700', color: '#c2410c', fontSize: '14.5px' }}>
+                        Ningún producto seleccionado todavía
                       </div>
-
-                      <div>
-                        <label style={{ fontSize: '11px', color: '#64748b', fontWeight: '600' }}>Cantidad a Despachar</label>
-                        <input
-                          type="number"
-                          min="1"
-                          max={row.stock_disponible}
-                          required
-                          value={row.cantidad}
-                          onChange={(e) => handleItemChange(idx, 'cantidad', e.target.value)}
-                          style={{ fontSize: '13px', fontWeight: '600' }}
-                        />
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveRow(idx)}
-                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', marginTop: '16px', display: 'flex', justifyContent: 'center' }}
-                        title="Eliminar ítem"
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                      <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: '12.5px' }}>
+                        Haga clic aquí o en el botón superior para abrir el catálogo e-commerce y elegir materiales mediante su fotografía.
+                      </p>
                     </div>
-                  ))}
+                  ) : (
+                    <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px' }}>
+                        <thead>
+                          <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#64748b', textAlign: 'left', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                            <th style={{ padding: '8px 12px', width: '56px', textAlign: 'center' }}>Foto</th>
+                            <th style={{ padding: '8px 12px' }}>Producto / Material</th>
+                            <th style={{ padding: '8px 12px', textAlign: 'center', width: '130px' }}>Stock Almacén</th>
+                            <th style={{ padding: '8px 12px', textAlign: 'center', width: '130px' }}>Cant. Despacho</th>
+                            <th style={{ padding: '8px 12px', textAlign: 'center', width: '60px' }}>Quitar</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detalles.map((item, idx) => {
+                            const prod = productosList.find((p) => String(p.id) === String(item.producto_id));
+                            const imgUrl = getProductImage(prod);
+                            const stock = getStockForWarehouse(prod, formHeader.almacen_id);
+                            const unit = prod?.unidad_medida?.simbolo || prod?.unidadMedida?.simbolo || 'u.';
+
+                            return (
+                              <tr key={idx} style={{ borderBottom: idx < detalles.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
+                                <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                                  <div style={{ width: '44px', height: '44px', borderRadius: '6px', border: '1px solid #e2e8f0', background: '#f8fafc', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
+                                    <img
+                                      src={imgUrl}
+                                      alt={prod?.nombre || 'Producto'}
+                                      style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '6px' }}
+                                      onError={(e) => handleProductImageError(e, prod?.sku)}
+                                    />
+                                  </div>
+                                </td>
+                                <td style={{ padding: '8px 12px' }}>
+                                  <div style={{ fontWeight: '700', color: '#0f172a' }}>{prod?.nombre || 'Producto'}</div>
+                                  <div style={{ fontSize: '11px', color: '#64748b', display: 'flex', gap: '8px', alignItems: 'center', marginTop: '2px' }}>
+                                    <span style={{ fontFamily: 'monospace', color: '#ea580c', fontWeight: '700' }}>{prod?.sku}</span>
+                                    {prod?.categoria?.nombre && (
+                                      <span style={{ background: '#f1f5f9', padding: '1px 6px', borderRadius: '4px', color: '#475569', fontWeight: '600' }}>🏷️ {prod.categoria.nombre}</span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                                  <span style={{ fontWeight: '800', fontFamily: 'monospace', color: stock > 0 ? '#16a34a' : '#dc2626', background: stock > 0 ? '#f0fdf4' : '#fef2f2', border: `1px solid ${stock > 0 ? '#bbf7d0' : '#fecaca'}`, padding: '4px 8px', borderRadius: '6px', fontSize: '12px' }}>
+                                    {stock} {unit}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max={stock > 0 ? stock : 1}
+                                    required
+                                    value={item.cantidad}
+                                    onChange={(e) => handleUpdateDetalleQty(item.producto_id, Number(e.target.value))}
+                                    style={{ width: '75px', textAlign: 'center', padding: '5px', fontSize: '13px', fontWeight: '700', borderRadius: '6px', border: '1px solid #cbd5e1', color: '#0f172a' }}
+                                  />
+                                </td>
+                                <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveDetalle(item.producto_id)}
+                                    style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '6px', borderRadius: '4px' }}
+                                    title="Quitar ítem"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -732,6 +934,324 @@ export default function SalidasPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL SECUNDARIO: CATÁLOGO DE PRODUCTOS E-COMMERCE CON FOTOGRAFÍAS */}
+      {showCatalogModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1200,
+            background: 'rgba(15, 23, 42, 0.75)',
+            backdropFilter: 'blur(5px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}
+        >
+          <div
+            style={{
+              maxWidth: '1180px',
+              width: '100%',
+              maxHeight: '92vh',
+              background: '#ffffff',
+              borderRadius: '16px',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              boxShadow: '0 25px 60px -15px rgba(0,0,0,0.3)',
+            }}
+          >
+            {/* CABECERA DEL SUB-MODAL */}
+            <div
+              style={{
+                padding: '16px 24px',
+                background: 'linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)',
+                borderBottom: '1px solid #fed7aa',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ width: '42px', height: '42px', borderRadius: '10px', background: '#ea580c', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 10px rgba(234,88,12,0.3)' }}>
+                  <ShoppingCart size={22} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '18px', color: '#0f172a', fontWeight: '800' }}>
+                    Catálogo de Materiales & Insumos (E-commerce)
+                  </h3>
+                  <p style={{ margin: '2px 0 0', fontSize: '12.5px', color: '#9a3412' }}>
+                    Almacén Origen: <strong>{almacenes.find(a => String(a.id) === String(formHeader.almacen_id))?.nombre || 'Almacén Principal'}</strong> • Visualice fotografías y existencias disponibles en tiempo real
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowCatalogModal(false)}
+                style={{ background: '#ffffff', border: '1px solid #fed7aa', borderRadius: '8px', cursor: 'pointer', color: '#64748b', padding: '6px 8px', display: 'flex', alignItems: 'center' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* BARRA DE BÚSQUEDA Y CATEGORÍAS */}
+            <div style={{ padding: '14px 24px', borderBottom: '1px solid #e2e8f0', background: '#f8fafc', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ position: 'relative' }}>
+                <Search size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                <input
+                  type="text"
+                  placeholder="Buscar material por SKU, nombre del producto o descripción..."
+                  value={catalogSearch}
+                  onChange={(e) => setCatalogSearch(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '9px 12px 9px 38px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    fontSize: '13.5px',
+                    boxSizing: 'border-box',
+                    background: '#ffffff',
+                  }}
+                />
+                {catalogSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setCatalogSearch('')}
+                    style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+
+              {/* PILLS DE CATEGORÍAS */}
+              <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
+                <button
+                  type="button"
+                  onClick={() => setCatalogCategory('all')}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: '20px',
+                    border: `1px solid ${catalogCategory === 'all' ? '#ea580c' : '#cbd5e1'}`,
+                    background: catalogCategory === 'all' ? '#ea580c' : '#ffffff',
+                    color: catalogCategory === 'all' ? '#ffffff' : '#475569',
+                    fontSize: '12px',
+                    fontWeight: '700',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  Todos los Productos ({productosList.length})
+                </button>
+                {catalogCategories.map((cat) => {
+                  const count = productosList.filter(p => p.categoria?.nombre === cat).length;
+                  const isSelected = catalogCategory === cat;
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setCatalogCategory(cat)}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: '20px',
+                        border: `1px solid ${isSelected ? '#ea580c' : '#cbd5e1'}`,
+                        background: isSelected ? '#ea580c' : '#ffffff',
+                        color: isSelected ? '#ffffff' : '#475569',
+                        fontSize: '12px',
+                        fontWeight: isSelected ? '700' : '600',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      {cat} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* GRID DE PRODUCTOS E-COMMERCE */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', background: '#f8fafc' }}>
+              {filteredCatalogProducts.length === 0 ? (
+                <div style={{ padding: '60px 20px', textAlign: 'center', background: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                  <Package size={44} color="#cbd5e1" style={{ margin: '0 auto 10px' }} />
+                  <h4 style={{ margin: 0, color: '#334155' }}>No se encontraron productos</h4>
+                  <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: '13px' }}>Pruebe ajustando el término de búsqueda o la categoría seleccionada.</p>
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: '16px' }}>
+                  {filteredCatalogProducts.map((prod) => {
+                    const stock = getStockForWarehouse(prod, formHeader.almacen_id);
+                    const hasStock = stock > 0;
+                    const imgUrl = getProductImage(prod);
+                    const selectedItem = tempDetalles.find(d => String(d.producto_id) === String(prod.id));
+                    const qty = selectedItem ? selectedItem.cantidad : 0;
+                    const isSelected = qty > 0;
+
+                    return (
+                      <div
+                        key={prod.id}
+                        style={{
+                          background: '#ffffff',
+                          borderRadius: '12px',
+                          border: `2px solid ${isSelected ? '#ea580c' : '#e2e8f0'}`,
+                          overflow: 'hidden',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          boxShadow: isSelected ? '0 8px 20px -4px rgba(234, 88, 12, 0.2)' : '0 2px 6px rgba(0,0,0,0.04)',
+                          transition: 'all 0.15s ease',
+                        }}
+                      >
+                        {/* IMAGEN Y BADGES */}
+                        <div style={{ height: '140px', background: '#f1f5f9', position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <img
+                            src={imgUrl}
+                            alt={prod.nombre}
+                            loading="lazy"
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '6px', transition: 'transform 0.25s ease' }}
+                            onError={(e) => handleProductImageError(e, prod.sku)}
+                          />
+
+                          {prod.categoria?.nombre && (
+                            <span style={{ position: 'absolute', top: '8px', left: '8px', background: 'rgba(15,23,42,0.75)', backdropFilter: 'blur(4px)', color: '#ffffff', fontSize: '10px', fontWeight: '700', padding: '2px 7px', borderRadius: '4px' }}>
+                              {prod.categoria.nombre}
+                            </span>
+                          )}
+
+                          {isSelected && (
+                            <span style={{ position: 'absolute', top: '8px', right: '8px', background: '#ea580c', color: '#ffffff', fontSize: '11px', fontWeight: '800', padding: '2px 8px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                              ✓ {qty} u.
+                            </span>
+                          )}
+                        </div>
+
+                        {/* CUERPO TARJETA */}
+                        <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', flex: 1 }}>
+                          <div style={{ fontFamily: 'monospace', fontSize: '11px', fontWeight: '700', color: '#ea580c', marginBottom: '2px' }}>
+                            {prod.sku}
+                          </div>
+                          <div style={{ fontSize: '13px', fontWeight: '700', color: '#0f172a', lineHeight: '1.3', minHeight: '34px', marginBottom: '8px' }} title={prod.nombre}>
+                            {prod.nombre}
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                            <span style={{ fontSize: '11px', fontWeight: '800', color: hasStock ? '#16a34a' : '#dc2626', background: hasStock ? '#f0fdf4' : '#fef2f2', border: `1px solid ${hasStock ? '#bbf7d0' : '#fecaca'}`, padding: '2px 6px', borderRadius: '4px' }}>
+                              {hasStock ? `● Stock: ${stock}` : '▲ Sin Stock'}
+                            </span>
+                            <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '600' }}>
+                              {prod.unidad_medida?.simbolo || prod.unidadMedida?.simbolo || 'UND'}
+                            </span>
+                          </div>
+
+                          {/* CONTROLES DE AGREGAR / CANTIDAD */}
+                          <div style={{ marginTop: 'auto' }}>
+                            {!isSelected ? (
+                              <button
+                                type="button"
+                                disabled={!hasStock}
+                                onClick={() => handleCatalogAdd(prod, 1)}
+                                style={{
+                                  width: '100%',
+                                  padding: '7px',
+                                  background: hasStock ? '#fff7ed' : '#f1f5f9',
+                                  border: `1px solid ${hasStock ? '#fdba74' : '#cbd5e1'}`,
+                                  color: hasStock ? '#c2410c' : '#94a3b8',
+                                  borderRadius: '6px',
+                                  fontSize: '12.5px',
+                                  fontWeight: '700',
+                                  cursor: hasStock ? 'pointer' : 'not-allowed',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '4px',
+                                  transition: 'all 0.15s ease',
+                                }}
+                              >
+                                <Plus size={14} /> + Agregar
+                              </button>
+                            ) : (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCatalogChangeQty(prod.id, -1, stock)}
+                                  style={{ width: '32px', height: '32px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#ffffff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}
+                                >
+                                  <Minus size={13} />
+                                </button>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max={stock}
+                                  value={qty}
+                                  onChange={(e) => handleCatalogSetQty(prod.id, Number(e.target.value), stock)}
+                                  style={{ flex: 1, height: '32px', textAlign: 'center', fontWeight: '800', border: '1px solid #ea580c', borderRadius: '6px', fontSize: '13px', color: '#0f172a' }}
+                                />
+                                <button
+                                  type="button"
+                                  disabled={qty >= stock}
+                                  onClick={() => handleCatalogChangeQty(prod.id, 1, stock)}
+                                  style={{ width: '32px', height: '32px', borderRadius: '6px', border: '1px solid #cbd5e1', background: qty >= stock ? '#f1f5f9' : '#ffffff', cursor: qty >= stock ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}
+                                >
+                                  <Plus size={13} />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* FOOTER SUB-MODAL */}
+            <div
+              style={{
+                padding: '14px 24px',
+                background: '#ffffff',
+                borderTop: '1px solid #e2e8f0',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '13px', color: '#475569' }}>
+                  Seleccionados: <strong style={{ color: '#0f172a' }}>{tempDetalles.length} productos</strong>
+                </span>
+                <span style={{ color: '#cbd5e1' }}>|</span>
+                <span style={{ fontSize: '13px', color: '#475569' }}>
+                  Total a Despachar: <strong style={{ color: '#ea580c' }}>{tempDetalles.reduce((acc, curr) => acc + Number(curr.cantidad || 0), 0)} u.</strong>
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => setShowCatalogModal(false)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={handleConfirmCatalogSelection}
+                  style={{ background: 'linear-gradient(135deg, #ea580c 0%, #c2410c 100%)', display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <Check size={16} /> Confirmar Selección y Volver
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

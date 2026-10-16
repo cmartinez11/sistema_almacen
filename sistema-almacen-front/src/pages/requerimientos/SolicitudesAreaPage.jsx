@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useRole } from '../../config/rbacConfig';
 import api from '../../services/api';
+import { obtenerImagenProducto, handleProductImageError } from '../../utils/productImages';
 import './SolicitudesAreaPage.css';
 
 export default function SolicitudesAreaPage() {
@@ -142,12 +143,13 @@ export default function SolicitudesAreaPage() {
   // Agregar al carrito
   const addToCart = (prod) => {
     const qty = getQty(prod.id);
+    const finalImg = obtenerImagenProducto(prod);
     setCart((prev) => {
       const existing = prev.find((item) => item.producto_id === prod.id);
       if (existing) {
         return prev.map((item) =>
           item.producto_id === prod.id
-            ? { ...item, cantidad_solicitada: item.cantidad_solicitada + qty }
+            ? { ...item, cantidad_solicitada: item.cantidad_solicitada + qty, imagen_url: finalImg }
             : item
         );
       }
@@ -157,7 +159,7 @@ export default function SolicitudesAreaPage() {
           producto_id: prod.id,
           nombre: prod.nombre,
           sku: prod.sku,
-          imagen_url: prod.imagen_url,
+          imagen_url: finalImg,
           unidad_medida: prod.unidad_medida?.nombre || prod.unidad_medida?.simbolo || 'UND',
           stock_actual: Number(prod.stock_actual || 0),
           cantidad_solicitada: qty,
@@ -406,24 +408,14 @@ export default function SolicitudesAreaPage() {
                 return (
                   <div key={prod.id} className="product-card-ecommerce">
                     <div className="card-image-wrapper">
-                      {prod.imagen_url ? (
-                        <img
-                          src={prod.imagen_url}
-                          alt={prod.nombre}
-                          className="card-product-img"
-                          onError={(e) => {
-                            e.target.style.display = 'none';
-                            e.target.nextSibling.style.display = 'flex';
-                          }}
-                        />
-                      ) : null}
-                      <div
-                        className="placeholder-img"
-                        style={{ display: prod.imagen_url ? 'none' : 'flex' }}
-                      >
-                        <Package size={38} />
-                        <span style={{ fontSize: '11px', fontWeight: '500' }}>Sin Imagen</span>
-                      </div>
+                      <img
+                        src={obtenerImagenProducto(prod)}
+                        alt={prod.nombre}
+                        className="card-product-img"
+                        loading="lazy"
+                        style={{ borderRadius: '6px', objectFit: 'cover' }}
+                        onError={(e) => handleProductImageError(e, prod.sku)}
+                      />
                       <span className="card-cat-badge">
                         {prod.categoria?.nombre || 'General'}
                       </span>
@@ -632,13 +624,13 @@ export default function SolicitudesAreaPage() {
               ) : (
                 cart.map((item) => (
                   <div key={item.producto_id} className="cart-item-row">
-                    {item.imagen_url ? (
-                      <img src={item.imagen_url} alt={item.nombre} className="cart-item-thumb" />
-                    ) : (
-                      <div className="cart-item-thumb" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <Package size={22} color="#94a3b8" />
-                      </div>
-                    )}
+                    <img
+                      src={obtenerImagenProducto(item)}
+                      alt={item.nombre}
+                      className="cart-item-thumb"
+                      style={{ borderRadius: '6px', objectFit: 'cover' }}
+                      onError={(e) => handleProductImageError(e, item.sku)}
+                    />
 
                     <div className="cart-item-info">
                       <div className="cart-item-name">{item.nombre}</div>
