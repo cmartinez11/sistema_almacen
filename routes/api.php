@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\TransferenciaController;
 use App\Http\Controllers\Api\UnidadMedidaController;
 use App\Http\Controllers\Api\AlmacenController;
 use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\Api\PrestamoHerramientaController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -58,6 +59,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('ingresos/{id}/pdf', [EntradaController::class, 'exportPdf']);
     Route::apiResource('salidas', SalidaController::class)->only(['index', 'store', 'show']);
     Route::get('salidas/{id}/pdf', [SalidaController::class, 'exportPdf']);
+
+    // Préstamo y Retorno de Herramientas / Activos Retornables
+    Route::patch('prestamos/{id}/devolver', [PrestamoHerramientaController::class, 'devolver']);
+    Route::apiResource('prestamos', PrestamoHerramientaController::class)->only(['index', 'store', 'show']);
 
     Route::apiResource('transferencias', TransferenciaController::class)->only(['index', 'store', 'show']);
     Route::get('transferencias/{id}/pdf', [TransferenciaController::class, 'pdf']);
@@ -118,6 +123,8 @@ Route::get('entradas/{id}/pdf', [EntradaController::class, 'exportPdf']);
 Route::get('ingresos/{id}/pdf', [EntradaController::class, 'exportPdf']);
 Route::apiResource('salidas', SalidaController::class)->only(['index', 'store', 'show']);
 Route::get('salidas/{id}/pdf', [SalidaController::class, 'exportPdf']);
+Route::patch('prestamos/{id}/devolver', [PrestamoHerramientaController::class, 'devolver']);
+Route::apiResource('prestamos', PrestamoHerramientaController::class)->only(['index', 'store', 'show']);
 Route::apiResource('transferencias', TransferenciaController::class)->only(['index', 'store', 'show']);
 Route::get('transferencias/{id}/pdf', [TransferenciaController::class, 'pdf']);
 Route::apiResource('inventarios-fisicos', \App\Http\Controllers\Api\InventarioFisicoController::class)->only(['index', 'store', 'show']);

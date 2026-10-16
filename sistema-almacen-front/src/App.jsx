@@ -11,6 +11,7 @@ import CategoriasPage from './pages/productos/CategoriasPage';
 import UnidadesMedidaPage from './pages/productos/UnidadesMedidaPage';
 import IngresosPage from './pages/movimientos/IngresosPage';
 import SalidasPage from './pages/movimientos/SalidasPage';
+import PrestamosPage from './pages/movimientos/PrestamosPage';
 import TransferenciasPage from './pages/movimientos/TransferenciasPage';
 import InventarioFisicoPage from './pages/movimientos/InventarioFisicoPage';
 import KardexFisicoPage from './pages/movimientos/KardexFisicoPage';
@@ -139,6 +140,19 @@ function App() {
               >
                 <MainLayout>
                   <SalidasPage />
+                </MainLayout>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/movimientos/prestamos"
+            element={
+              <ProtectedRoute
+                allowedRoles={[ROLES.ADMINISTRADOR, ROLES.ALMACENERO, ROLES.SUPERVISOR]}
+              >
+                <MainLayout>
+                  <PrestamosPage />
                 </MainLayout>
               </ProtectedRoute>
             }

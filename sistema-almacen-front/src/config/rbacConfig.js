@@ -190,6 +190,13 @@ export const MENU_ITEMS = [
         allowedRoles: [ROLES.ADMINISTRADOR, ROLES.ALMACENERO, ROLES.SUPERVISOR],
       },
       {
+        id: 'movimientos-prestamos',
+        title: 'Préstamo de Herramientas',
+        path: '/movimientos/prestamos',
+        icon: 'Wrench',
+        allowedRoles: [ROLES.ADMINISTRADOR, ROLES.ALMACENERO, ROLES.SUPERVISOR],
+      },
+      {
         id: 'movimientos-transferencias',
         title: 'Transferencias',
         path: '/movimientos/transferencias',

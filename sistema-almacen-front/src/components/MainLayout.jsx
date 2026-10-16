@@ -28,6 +28,7 @@ import {
   ShoppingBag,
   ShoppingCart,
   Bell,
+  Wrench,
 } from 'lucide-react';
 import {
   MENU_ITEMS,
@@ -61,6 +62,7 @@ const iconMap = {
   AlertTriangle,
   ShoppingBag,
   ShoppingCart,
+  Wrench,
 };
 
 const renderIcon = (iconName) => {
