@@ -155,50 +155,53 @@
     <div class="info-grid">
         <table class="info-table">
             <tr>
-                <td style="width: 45%;">
+                <td style="width: 40%;">
                     <span class="label">Trabajador Receptante (Personal):</span><br>
                     <span class="value">
                         <strong>{{ $salida->personal ? $salida->personal->nombres.' '.$salida->personal->apellidos : 'PERSONAL NO ESPECIFICADO' }}</strong><br>
-                        <small style="color: #64748b;">DNI / Doc: {{ $salida->personal->dni ?? $salida->personal->documento_identidad ?? 'S/N' }}</small>
+                        <small style="color: #64748b;">DNI / Doc: {{ $salida->personal->dni ?? $salida->personal->documento_identidad ?? 'S/N' }}</small><br>
+                        <small style="color: #475569;">Área Base Empleado: <strong>{{ $salida->area_trabajador ?? $salida->personal->area ?? 'General' }}</strong></small>
                     </span>
                 </td>
-                <td style="width: 30%;">
-                    <span class="label">Área / Destino Asignado:</span><br>
+                <td style="width: 32%;">
+                    <span class="label">Área de Destino (Centro de Costo):</span><br>
                     <span class="value">
-                        <strong>{{ $salida->destino_cliente ?? $salida->personal->area ?? 'Área Operativa General' }}</strong>
+                        <strong style="color: #c2410c;">{{ $salida->area_destino ?? $salida->destino_cliente ?? 'General' }}</strong>
                     </span>
+                    <br><br>
+                    <span class="label">Almacén de Origen:</span><br>
+                    <span class="value"><strong>{{ $salida->almacen->nombre ?? 'Almacén Principal' }}</strong></span>
                 </td>
-                <td style="width: 25%;">
+                <td style="width: 28%;">
                     <span class="label">Fecha / Hora Despacho:</span><br>
                     <span class="value">
                         {{ \Carbon\Carbon::parse($salida->fecha_emision)->format('d/m/Y H:i A') }}
                     </span>
-                </td>
-            </tr>
-            <tr>
-                <td>
-                    <span class="label">Tipo de Salida:</span><br>
-                    <span class="value">
-                        <span class="badge badge-info">{{ $salida->tipo_salida ?? 'Asignación a Personal' }}</span>
-                    </span>
-                </td>
-                <td>
-                    <span class="label">Despachado por (Almacenero):</span><br>
-                    <span class="value">
-                        {{ $salida->user->name ?? ($salida->personal_despacho ? $salida->personal_despacho->nombres : 'Almacenero Logueado') }}
-                    </span>
-                </td>
-                <td>
+                    <br><br>
                     <span class="label">Estado Documento:</span><br>
                     <span class="badge badge-emitido">
                         {{ strtoupper($salida->estado ?? 'EMITIDO') }}
                     </span>
                 </td>
             </tr>
-            @if($salida->observaciones)
+            <tr>
+                <td>
+                    <span class="label">Tipo de Operación:</span><br>
+                    <span class="value">
+                        <span class="badge badge-info">{{ $salida->tipo_salida ?? 'Asignación a Personal' }}</span>
+                    </span>
+                </td>
+                <td colspan="2">
+                    <span class="label">Justificación / Motivo del Despacho:</span><br>
+                    <span class="value" style="font-weight: 600; color: #0f172a;">
+                        {{ $salida->justificacion ?? $salida->observaciones ?? 'Sin justificación especificada' }}
+                    </span>
+                </td>
+            </tr>
+            @if($salida->observaciones && $salida->observaciones !== $salida->justificacion)
             <tr>
                 <td colspan="3" style="padding-top: 8px; border-top: 1px dashed #fdba74;">
-                    <span class="label">Observaciones / Motivo de Entrega:</span><br>
+                    <span class="label">Observaciones Adicionales:</span><br>
                     <span class="value" style="font-style: italic;">{{ $salida->observaciones }}</span>
                 </td>
             </tr>

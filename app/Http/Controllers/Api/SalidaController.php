@@ -24,6 +24,7 @@ class SalidaController extends Controller
 
         $salidas = SalidaCabecera::with([
             'personal',
+            'almacen',
             'salidasDetalle.producto',
         ])->latest()->paginate($perPage);
 
@@ -41,6 +42,9 @@ class SalidaController extends Controller
         $validated = $request->validate([
             'almacen_id' => 'nullable|exists:almacenes,id',
             'personal_id' => 'required|exists:personal,id',
+            'area_trabajador' => 'nullable|string|max:150',
+            'area_destino' => 'nullable|string|max:150',
+            'justificacion' => 'nullable|string',
             'observaciones' => 'nullable|string',
             'detalles' => 'required|array|min:1',
             'detalles.*.producto_id' => 'required|exists:productos,id',
@@ -52,11 +56,20 @@ class SalidaController extends Controller
             $cabecera = DB::transaction(function () use ($validated) {
                 $almacenId = (int) ($validated['almacen_id'] ?? 1);
 
-                // Obtener trabajador seleccionado para recuperar automáticamente su área
+                // Obtener trabajador seleccionado para recuperar automáticamente su área base de personal
                 $personal = \App\Models\Personal::findOrFail($validated['personal_id']);
-                $areaTrabajador = !empty($personal->area) ? $personal->area : 'General';
+                $areaTrabajador = !empty($validated['area_trabajador'])
+                    ? trim($validated['area_trabajador'])
+                    : (!empty($personal->area) ? trim($personal->area) : 'General');
+
+                // Área de destino / centro de costo especificado (por defecto el área base si no se indicó)
+                $areaDestino = !empty($validated['area_destino'])
+                    ? trim($validated['area_destino'])
+                    : $areaTrabajador;
+
+                $justificacion = !empty($validated['justificacion']) ? trim($validated['justificacion']) : null;
                 $fechaEmisionAuto = now();
-                $destinoAuto = "Asignación a " . $areaTrabajador;
+                $destinoAuto = "Asignación a " . $areaDestino;
                 $tipoSalidaAuto = 'Asignación a Personal';
 
                 // 1. VALIDACIÓN PREVIA DE STOCK POR ALMACÉN EN BASE DE DATOS
@@ -82,15 +95,18 @@ class SalidaController extends Controller
                     }
                 }
 
-                // 2. Crear cabecera de salida asignada al trabajador con área y fecha automáticas
+                // 2. Crear cabecera de salida con trazabilidad completa de áreas y justificación
                 $cabecera = SalidaCabecera::create([
                     'almacen_id' => $almacenId,
                     'personal_id' => $personal->id,
+                    'area_trabajador' => $areaTrabajador,
+                    'area_destino' => $areaDestino,
+                    'justificacion' => $justificacion,
                     'destino_cliente' => $destinoAuto,
                     'tipo_salida' => $tipoSalidaAuto,
                     'numero_referencia' => null,
                     'fecha_emision' => $fechaEmisionAuto,
-                    'observaciones' => $validated['observaciones'] ?? null,
+                    'observaciones' => $validated['observaciones'] ?? $justificacion,
                     'estado' => 'emitido',
                 ]);
 
@@ -154,7 +170,7 @@ class SalidaController extends Controller
             return response()->json([
                 'status' => 'success',
                 'message' => 'Nota de Salida y asignación a personal registrada correctamente.',
-                'data' => $cabecera->load(['personal', 'salidasDetalle.producto']),
+                'data' => $cabecera->load(['personal', 'almacen', 'salidasDetalle.producto']),
             ], 201);
 
         } catch (Throwable $e) {
@@ -172,6 +188,7 @@ class SalidaController extends Controller
     {
         $salida = SalidaCabecera::with([
             'personal',
+            'almacen',
             'salidasDetalle.producto',
         ])->find($id);
 
@@ -195,6 +212,7 @@ class SalidaController extends Controller
     {
         $salida = SalidaCabecera::with([
             'personal',
+            'almacen',
             'salidasDetalle.producto.unidadMedida',
         ])->find($id);
 

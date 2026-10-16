@@ -14,7 +14,11 @@ class SalidaCabecera extends Model
     protected $table = 'salidas_cabecera';
 
     protected $fillable = [
+        'almacen_id',
         'personal_id',
+        'area_trabajador',
+        'area_destino',
+        'justificacion',
         'destino_cliente',
         'tipo_salida',
         'numero_referencia',
@@ -33,6 +37,11 @@ class SalidaCabecera extends Model
     public function personal(): BelongsTo
     {
         return $this->belongsTo(Personal::class, 'personal_id');
+    }
+
+    public function almacen(): BelongsTo
+    {
+        return $this->belongsTo(Almacen::class, 'almacen_id');
     }
 
     public function salidasDetalle(): HasMany
