@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios'; // O tu instancia configurada
 
+import { normalizeRole, ROLES } from '../config/rbacConfig';
+
 export default function Login() {
 
   const [email, setEmail] = useState('');
@@ -27,8 +29,12 @@ export default function Login() {
         localStorage.setItem('token', response.data.access_token);
         localStorage.setItem('user', JSON.stringify(response.data.user));
 
-        // Redirigir al catálogo de productos
-        navigate('/productos');
+        const userRole = normalizeRole(response.data.user);
+        if (userRole === ROLES.RESPONSABLE_AREA) {
+          navigate('/solicitudes-area');
+        } else {
+          navigate('/dashboard');
+        }
       } else {
         setError('No se recibió el token de acceso del servidor.');
       }

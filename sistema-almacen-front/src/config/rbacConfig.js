@@ -8,6 +8,7 @@ export const ROLES = {
   SUPERVISOR: 'supervisor',
   COMPRAS: 'compras',
   GERENCIA: 'gerencia',
+  RESPONSABLE_AREA: 'responsable_area',
 };
 
 export const ROLE_LABELS = {
@@ -16,6 +17,7 @@ export const ROLE_LABELS = {
   [ROLES.SUPERVISOR]: 'Supervisor de Almacén',
   [ROLES.COMPRAS]: 'Gestión de Compras',
   [ROLES.GERENCIA]: 'Gerencia / Directiva',
+  [ROLES.RESPONSABLE_AREA]: 'Responsable de Área (E-commerce)',
 };
 
 export const ROLE_BADGE_COLORS = {
@@ -24,6 +26,7 @@ export const ROLE_BADGE_COLORS = {
   [ROLES.SUPERVISOR]: { bg: '#F0FDF4', color: '#16A34A', border: '#86EFAC' },
   [ROLES.COMPRAS]: { bg: '#FFF7ED', color: '#EA580C', border: '#FDBA74' },
   [ROLES.GERENCIA]: { bg: '#FAF5FF', color: '#9333EA', border: '#D8B4FE' },
+  [ROLES.RESPONSABLE_AREA]: { bg: '#ECFDF5', color: '#059669', border: '#A7F3D0' },
 };
 
 export const normalizeRole = (user) => {
@@ -50,6 +53,9 @@ export const normalizeRole = (user) => {
     .replace(/[\u0300-\u036f]/g, '')
     .trim();
 
+  if (normalized.includes('responsable') || normalized.includes('area') || normalized.includes('solicitante')) {
+    return ROLES.RESPONSABLE_AREA;
+  }
   if (normalized.includes('almacen') || normalized.includes('operador') || normalized.includes('planta')) {
     return ROLES.ALMACENERO;
   }
@@ -120,6 +126,13 @@ export const useRole = () => {
 };
 
 export const MENU_ITEMS = [
+  {
+    id: 'solicitudes-area',
+    title: 'Solicitudes de Área (E-commerce)',
+    icon: 'ShoppingBag',
+    path: '/solicitudes-area',
+    allowedRoles: [ROLES.RESPONSABLE_AREA, ROLES.ADMINISTRADOR, ROLES.COMPRAS, ROLES.ALMACENERO],
+  },
   {
     id: 'dashboard',
     title: 'Dashboard',
@@ -212,6 +225,13 @@ export const MENU_ITEMS = [
     icon: 'Users',
     path: '/personal',
     allowedRoles: [ROLES.ADMINISTRADOR, ROLES.SUPERVISOR, ROLES.ALMACENERO],
+  },
+  {
+    id: 'usuarios',
+    title: 'Usuarios & Accesos',
+    icon: 'ShieldCheck',
+    path: '/usuarios',
+    allowedRoles: [ROLES.ADMINISTRADOR],
   },
   {
     id: 'reportes',

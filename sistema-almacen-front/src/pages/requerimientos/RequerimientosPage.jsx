@@ -14,6 +14,10 @@ export default function RequerimientosPage() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('bandeja');
   
+  // Estado para pre-requerimientos de área
+  const [preRequerimientos, setPreRequerimientos] = useState([]);
+  const [loadingPreReqs, setLoadingPreReqs] = useState(false);
+  
   // Modal de Creación (Sin Precios)
   const [showModal, setShowModal] = useState(false);
   const [asignarEspecial, setAsignarEspecial] = useState(false);
@@ -157,6 +161,9 @@ export default function RequerimientosPage() {
 
       const dataProv = resProv.data?.data || resProv.data;
       setProveedoresList(Array.isArray(dataProv) ? dataProv : []);
+
+      // Cargar pre-requerimientos del módulo e-commerce
+      loadPreRequerimientos();
     } catch (err) {
       console.warn('Usando datos de respaldo para Requerimientos:', err);
       setRequerimientos(mockRequerimientos);
@@ -186,9 +193,13 @@ export default function RequerimientosPage() {
   };
 
   const handleAddRow = () => {
+    const selectedIds = new Set(detalles.map((d) => String(d.producto_id)).filter(Boolean));
+    const nextProd = productosList.find((p) => !selectedIds.has(String(p.id)));
+    if (!nextProd) return;
+
     setDetalles([
       ...detalles,
-      { producto_id: productosList[0]?.id || '', cantidad_solicitada: 1 },
+      { producto_id: nextProd.id, cantidad_solicitada: 1 },
     ]);
   };
 
@@ -206,6 +217,21 @@ export default function RequerimientosPage() {
   // Crear Requerimiento (ALMACENERO) - Sin precios
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    // Validación de seguridad: verificar que no haya productos vacíos ni duplicados
+    const prodIds = detalles.map((d) => String(d.producto_id)).filter(Boolean);
+    const uniqueIds = new Set(prodIds);
+
+    if (detalles.some((d) => !d.producto_id)) {
+      alert('Por favor seleccione un producto para cada fila agregada.');
+      return;
+    }
+
+    if (uniqueIds.size !== prodIds.length) {
+      alert('No se pueden repetir productos en la misma solicitud. Por favor verifique las filas duplicadas.');
+      return;
+    }
+
     try {
       const ahora = new Date();
       const pad = (n) => String(n).padStart(2, '0');
@@ -428,6 +454,69 @@ export default function RequerimientosPage() {
     }
   };
 
+  const loadPreRequerimientos = async () => {
+    try {
+      setLoadingPreReqs(true);
+      const res = await api.get('/pre-requerimientos');
+      if (res.data?.status === 'success' && Array.isArray(res.data.data)) {
+        setPreRequerimientos(res.data.data);
+      }
+    } catch (err) {
+      console.warn('Error al cargar pre-requerimientos:', err);
+    } finally {
+      setLoadingPreReqs(false);
+    }
+  };
+
+  const handleDespacharPreReq = async (preReq) => {
+    if (!window.confirm(`¿Confirmas el despacho inmediato de la solicitud ${preReq.correlativo} para el área de ${preReq.area || 'General'}?\n\nSe generará automáticamente la Nota de Salida y se rebajará el stock físico del almacén.`)) {
+      return;
+    }
+    try {
+      const res = await api.post(`/pre-requerimientos/${preReq.id}/procesar-salida`);
+      if (res.data?.status === 'success') {
+        alert(res.data.message || 'Despacho generado exitosamente.');
+        loadData();
+        loadPreRequerimientos();
+      }
+    } catch (err) {
+      console.error(err);
+      alert(err.response?.data?.message || 'Error al procesar la salida física.');
+    }
+  };
+
+  const handlePasarCotizacionPreReq = async (preReq) => {
+    const motivo = window.prompt(`¿Deseas derivar la solicitud ${preReq.correlativo} a Cotización y Compras? Ingresa el motivo:`, 'Falta de existencias en almacén');
+    if (motivo === null) return;
+    try {
+      const res = await api.put(`/pre-requerimientos/${preReq.id}/pasar-cotizacion`, { motivo });
+      if (res.data?.status === 'success') {
+        alert(res.data.message || 'Solicitud derivada a Compras.');
+        loadData();
+        loadPreRequerimientos();
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error al derivar a cotización.');
+    }
+  };
+
+  const handleRechazarPreReq = async (preReq) => {
+    const motivo = window.prompt(`Motivo de rechazo para ${preReq.correlativo}:`, 'Requerimiento no procedente');
+    if (motivo === null) return;
+    try {
+      const res = await api.put(`/pre-requerimientos/${preReq.id}/rechazar`, { motivo });
+      if (res.data?.status === 'success') {
+        alert(res.data.message || 'Pre-requerimiento rechazado.');
+        loadData();
+        loadPreRequerimientos();
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error al rechazar.');
+    }
+  };
+
   return (
     <div className="page-container">
       <div className="page-header-card">
@@ -441,6 +530,29 @@ export default function RequerimientosPage() {
       </div>
 
       <div style={{ display: 'flex', gap: '10px', borderBottom: '2px solid #e2e8f0', marginBottom: '16px' }}>
+        <button
+          onClick={() => setActiveTab('prereqs')}
+          style={{
+            padding: '10px 18px',
+            border: 'none',
+            background: 'none',
+            fontSize: '14px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            borderBottom: activeTab === 'prereqs' ? '3px solid #059669' : '3px solid transparent',
+            color: activeTab === 'prereqs' ? '#059669' : '#64748b',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+          }}
+        >
+          🛍️ Pre-requerimientos de Áreas (E-commerce)
+          {preRequerimientos.length > 0 && (
+            <span style={{ background: '#059669', color: '#fff', borderRadius: '12px', padding: '1px 8px', fontSize: '11px', fontWeight: '800' }}>
+              {preRequerimientos.length}
+            </span>
+          )}
+        </button>
         <button
           onClick={() => setActiveTab('bandeja')}
           style={{
@@ -474,7 +586,108 @@ export default function RequerimientosPage() {
       </div>
 
       <div className="table-card">
-        {loading ? (
+        {activeTab === 'prereqs' ? (
+          loadingPreReqs ? (
+            <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>Cargando solicitudes de área...</div>
+          ) : preRequerimientos.length === 0 ? (
+            <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
+              No hay pre-requerimientos pendientes en este momento.
+            </div>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Código Pre-Req</th>
+                  <th>Área Solicitante</th>
+                  <th>Responsable</th>
+                  <th>Fecha Solicitud</th>
+                  <th>Prioridad</th>
+                  <th>Disponibilidad Stock</th>
+                  <th>Ítems Solicitados</th>
+                  <th>Acciones Almacén / Compras</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preRequerimientos.map((pr) => {
+                  const totalItems = pr.detalles?.length || 0;
+                  return (
+                    <tr key={pr.id}>
+                      <td>
+                        <strong style={{ color: '#0284c7', fontFamily: 'monospace', fontSize: '14px' }}>
+                          {pr.correlativo}
+                        </strong>
+                      </td>
+                      <td>
+                        <span className="badge badge-info" style={{ fontWeight: '700' }}>
+                          🏢 {pr.area || 'General'}
+                        </span>
+                      </td>
+                      <td>
+                        <strong style={{ color: '#0f172a' }}>
+                          {pr.personal ? `${pr.personal.nombres} ${pr.personal.apellidos}` : 'Encargado de Área'}
+                        </strong>
+                      </td>
+                      <td>{new Date(pr.fecha_solicitud || pr.created_at).toLocaleString()}</td>
+                      <td>
+                        <span className={`badge badge-${pr.prioridad === 'alta' ? 'danger' : pr.prioridad === 'media' ? 'warning' : 'success'}`}>
+                          {pr.prioridad}
+                        </span>
+                      </td>
+                      <td>
+                        {pr.disponibilidad_completa ? (
+                          <span style={{ color: '#16a34a', fontWeight: '700', fontSize: '12px', background: '#ecfdf5', padding: '3px 8px', borderRadius: '4px', border: '1px solid #a7f3d0' }}>
+                            ✓ 100% Stock Físico
+                          </span>
+                        ) : (
+                          <span style={{ color: '#d97706', fontWeight: '700', fontSize: '12px', background: '#fffbeb', padding: '3px 8px', borderRadius: '4px', border: '1px solid #fde68a' }}>
+                            ⚠️ Stock Insuficiente (Comprar)
+                          </span>
+                        )}
+                      </td>
+                      <td>
+                        <button
+                          className="secondary-btn"
+                          onClick={() => handleOpenItemsModal(pr)}
+                          style={{ padding: '4px 8px', fontSize: '12px' }}
+                        >
+                          <Eye size={13} /> {totalItems} {totalItems === 1 ? 'producto' : 'productos'}
+                        </button>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          <button
+                            className="primary-btn"
+                            onClick={() => handleDespacharPreReq(pr)}
+                            style={{ padding: '5px 9px', fontSize: '12px', background: '#059669', borderColor: '#059669' }}
+                            title="Despachar inmediatamente generando Nota de Salida física"
+                          >
+                            <CheckCircle2 size={13} /> Despachar Salida
+                          </button>
+                          <button
+                            className="primary-btn"
+                            onClick={() => handlePasarCotizacionPreReq(pr)}
+                            style={{ padding: '5px 9px', fontSize: '12px', background: '#0284c7', borderColor: '#0284c7' }}
+                            title="Derivar a Compras para Cotización con proveedores"
+                          >
+                            <ShoppingCart size={13} /> A Cotización
+                          </button>
+                          <button
+                            className="secondary-btn"
+                            onClick={() => handleRechazarPreReq(pr)}
+                            style={{ padding: '5px 8px', fontSize: '12px', color: '#dc2626', borderColor: '#fca5a5' }}
+                            title="Rechazar solicitud"
+                          >
+                            <XCircle size={13} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )
+        ) : loading ? (
           <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>Cargando requerimientos...</div>
         ) : (
           <table className="data-table">
@@ -755,56 +968,159 @@ export default function RequerimientosPage() {
 
                 {/* DETALLES DINÁMICOS DE PRODUCTOS (SIN PRECIOS) */}
                 <div style={{ marginTop: '16px', borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                    <h4 style={{ margin: 0, fontSize: '15px', color: '#0f172a' }}>Productos a Solicitar (Solo Cantidades)</h4>
-                    <button type="button" className="secondary-btn" onClick={handleAddRow} style={{ padding: '4px 10px', fontSize: '12.5px' }}>
-                      <Plus size={14} /> Añadir Producto
-                    </button>
-                  </div>
+                  {(() => {
+                    const selectedProductIds = new Set(detalles.map((d) => String(d.producto_id)).filter(Boolean));
+                    const hasAvailableProducts = productosList.length > 0 && productosList.some((p) => !selectedProductIds.has(String(p.id)));
 
-                  {detalles.map((row, idx) => (
-                    <div key={idx} style={{ display: 'grid', gridTemplateColumns: '3fr 1fr 40px', gap: '10px', alignItems: 'center', marginBottom: '10px', background: '#f8fafc', padding: '8px', borderRadius: '8px' }}>
-                      <div>
-                        <label style={{ fontSize: '11px', color: '#64748b' }}>Producto Requerido</label>
-                        <select
-                          required
-                          value={row.producto_id}
-                          onChange={(e) => handleItemChange(idx, 'producto_id', e.target.value)}
-                          style={{ padding: '8px', fontSize: '13px' }}
-                        >
-                          <option value="">-- Seleccionar Producto --</option>
-                          {productosList.map((prod) => {
-                            const skuVal = prod.sku || prod.codigo_sku || `PROD-${prod.id}`;
-                            const nomVal = prod.nombre || prod.nombre_producto || 'Producto Sin Nombre';
-                            return (
-                              <option key={prod.id} value={prod.id}>
-                                {skuVal} - {nomVal}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </div>
+                    return (
+                      <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                          <h4 style={{ margin: 0, fontSize: '15px', color: '#0f172a' }}>Productos a Solicitar (Solo Cantidades)</h4>
+                          <button
+                            type="button"
+                            className="secondary-btn"
+                            onClick={handleAddRow}
+                            disabled={!hasAvailableProducts}
+                            style={{
+                              padding: '4px 10px',
+                              fontSize: '12.5px',
+                              opacity: !hasAvailableProducts ? 0.5 : 1,
+                              cursor: !hasAvailableProducts ? 'not-allowed' : 'pointer',
+                            }}
+                            title={!hasAvailableProducts ? 'Todos los productos del catálogo ya han sido añadidos' : 'Añadir Producto'}
+                          >
+                            <Plus size={14} /> Añadir Producto
+                          </button>
+                        </div>
 
-                      <div>
-                        <label style={{ fontSize: '11px', color: '#64748b' }}>Cant. Solicitada</label>
-                        <input
-                          type="number"
-                          min="1"
-                          required
-                          value={row.cantidad_solicitada}
-                          onChange={(e) => handleItemChange(idx, 'cantidad_solicitada', e.target.value)}
-                        />
-                      </div>
+                        {detalles.map((row, idx) => {
+                          const otherSelectedIds = new Set(
+                            detalles
+                              .filter((_, i) => i !== idx)
+                              .map((d) => String(d.producto_id))
+                              .filter(Boolean)
+                          );
 
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveRow(idx)}
-                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', marginTop: '16px' }}
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  ))}
+                          return (
+                            <div
+                              key={idx}
+                              style={{
+                                display: 'grid',
+                                gridTemplateColumns: '1fr 140px 40px',
+                                gap: '12px',
+                                alignItems: 'end',
+                                marginBottom: '10px',
+                                background: '#f8fafc',
+                                padding: '12px 14px',
+                                borderRadius: '8px',
+                                border: '1px solid #e2e8f0',
+                                boxSizing: 'border-box',
+                              }}
+                            >
+                              <div>
+                                <label
+                                  style={{
+                                    display: 'block',
+                                    fontSize: '12px',
+                                    fontWeight: '600',
+                                    color: '#64748b',
+                                    marginBottom: '6px',
+                                  }}
+                                >
+                                  Producto Requerido
+                                </label>
+                                <select
+                                  required
+                                  value={row.producto_id}
+                                  onChange={(e) => handleItemChange(idx, 'producto_id', e.target.value)}
+                                  style={{
+                                    width: '100%',
+                                    height: '38px',
+                                    padding: '6px 10px',
+                                    border: '1px solid #cbd5e1',
+                                    borderRadius: '6px',
+                                    fontSize: '13.5px',
+                                    background: '#ffffff',
+                                    boxSizing: 'border-box',
+                                  }}
+                                >
+                                  <option value="">-- Seleccionar Producto --</option>
+                                  {productosList.map((prod) => {
+                                    const isSelectedElsewhere = otherSelectedIds.has(String(prod.id));
+                                    const skuVal = prod.sku || prod.codigo_sku || `PROD-${prod.id}`;
+                                    const nomVal = prod.nombre || prod.nombre_producto || 'Producto Sin Nombre';
+                                    return (
+                                      <option
+                                        key={prod.id}
+                                        value={prod.id}
+                                        disabled={isSelectedElsewhere}
+                                      >
+                                        {skuVal} - {nomVal}{isSelectedElsewhere ? ' (Ya seleccionado)' : ''}
+                                      </option>
+                                    );
+                                  })}
+                                </select>
+                              </div>
+
+                              <div>
+                                <label
+                                  style={{
+                                    display: 'block',
+                                    fontSize: '12px',
+                                    fontWeight: '600',
+                                    color: '#64748b',
+                                    marginBottom: '6px',
+                                  }}
+                                >
+                                  Cant. Solicitada
+                                </label>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  required
+                                  value={row.cantidad_solicitada}
+                                  onChange={(e) => handleItemChange(idx, 'cantidad_solicitada', e.target.value)}
+                                  style={{
+                                    width: '100%',
+                                    height: '38px',
+                                    padding: '6px 10px',
+                                    border: '1px solid #cbd5e1',
+                                    borderRadius: '6px',
+                                    fontSize: '13.5px',
+                                    background: '#ffffff',
+                                    boxSizing: 'border-box',
+                                  }}
+                                />
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveRow(idx)}
+                                title="Eliminar producto"
+                                style={{
+                                  height: '38px',
+                                  width: '38px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  background: 'none',
+                                  border: 'none',
+                                  color: '#ef4444',
+                                  cursor: 'pointer',
+                                  borderRadius: '6px',
+                                  transition: 'background-color 0.2s',
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#fee2e2')}
+                                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
 

@@ -23,7 +23,36 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'role',
+        'area',
+        'personal_id',
+        'almacen_id',
+        'activo',
     ];
+
+    protected $appends = [
+        'rol',
+    ];
+
+    public function personal()
+    {
+        return $this->belongsTo(Personal::class, 'personal_id');
+    }
+
+    public function almacen()
+    {
+        return $this->belongsTo(Almacen::class, 'almacen_id');
+    }
+
+    public function getRolAttribute(): ?string
+    {
+        return $this->attributes['role'] ?? null;
+    }
+
+    public function setRolAttribute(?string $value): void
+    {
+        $this->attributes['role'] = $value;
+    }
 
     /**
      * The attributes that should be hidden for serialization.
@@ -45,6 +74,7 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'activo' => 'boolean',
         ];
     }
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Filter, Edit, Trash2, PackageCheck, AlertCircle, X, Check, Info, Layers, Eye, ArrowDownLeft, ArrowUpRight, FileText } from 'lucide-react';
+import { Plus, Search, Filter, Edit, Trash2, PackageCheck, AlertCircle, X, Check, Info, Layers, Eye, ArrowDownLeft, ArrowUpRight, FileText, Upload, Image as ImageIcon, Camera } from 'lucide-react';
 import { useRole } from '../../config/rbacConfig';
 import api from '../../services/api';
 import '../pagesCommon.css';
@@ -21,6 +21,10 @@ export default function ProductosCatalogoPage() {
   const [historialData, setHistorialData] = useState({ producto: null, entradas: [], salidas: [] });
   const [loadingHistorial, setLoadingHistorial] = useState(false);
   const [historialTab, setHistorialTab] = useState('entradas');
+
+  // Estados para imagen de producto
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
 
   const [formData, setFormData] = useState({
     sku: '',
@@ -79,6 +83,8 @@ export default function ProductosCatalogoPage() {
   const handleOpenModal = (prod = null) => {
     if (prod) {
       setEditingId(prod.id);
+      setImageFile(null);
+      setImagePreview(prod.imagen_url || null);
       setFormData({
         sku: prod.sku || '',
         nombre: prod.nombre || '',
@@ -93,6 +99,8 @@ export default function ProductosCatalogoPage() {
       });
     } else {
       setEditingId(null);
+      setImageFile(null);
+      setImagePreview(null);
       setFormData({
         sku: `SKU-${Math.floor(1000 + Math.random() * 9000)}`,
         nombre: '',
@@ -111,29 +119,41 @@ export default function ProductosCatalogoPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const payload = {
-      ...formData,
-      maneja_conversion: Boolean(formData.maneja_conversion),
-      unidad_secundaria_id: formData.maneja_conversion && formData.unidad_secundaria_id ? Number(formData.unidad_secundaria_id) : null,
-      factor_conversion: formData.maneja_conversion ? (Number(formData.factor_conversion) || 1) : 1,
-    };
+
+    const submitData = new FormData();
+    submitData.append('sku', formData.sku);
+    submitData.append('nombre', formData.nombre);
+    submitData.append('categoria_id', formData.categoria_id);
+    submitData.append('unidades_medida_id', formData.unidades_medida_id);
+    submitData.append('stock_actual', formData.stock_actual);
+    submitData.append('stock_minimo', formData.stock_minimo);
+    submitData.append('costo_unitario', formData.costo_unitario);
+    submitData.append('maneja_conversion', formData.maneja_conversion ? 1 : 0);
+    if (formData.maneja_conversion && formData.unidad_secundaria_id) {
+      submitData.append('unidad_secundaria_id', formData.unidad_secundaria_id);
+      submitData.append('factor_conversion', formData.factor_conversion || 1);
+    }
+    if (imageFile) {
+      submitData.append('imagen', imageFile);
+    }
 
     try {
       if (editingId) {
-        await api.put(`/productos/${editingId}`, payload);
+        submitData.append('_method', 'PUT');
+        await api.post(`/productos/${editingId}`, submitData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
       } else {
-        await api.post('/productos', payload);
+        await api.post('/productos', submitData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
       }
       setShowModal(false);
       loadData();
     } catch (err) {
       console.error(err);
-      if (editingId) {
-        setProductos((prev) => prev.map((p) => (p.id === editingId ? { ...p, ...payload } : p)));
-      } else {
-        setProductos((prev) => [...prev, { id: Date.now(), ...payload }]);
-      }
       setShowModal(false);
+      loadData();
     }
   };
 
@@ -203,6 +223,7 @@ export default function ProductosCatalogoPage() {
           <table className="data-table">
             <thead>
               <tr>
+                <th style={{ width: '50px' }}>Foto</th>
                 <th>SKU</th>
                 <th>Nombre del Producto</th>
                 <th>Categoría</th>
@@ -237,6 +258,20 @@ export default function ProductosCatalogoPage() {
 
                 return (
                   <tr key={item.id}>
+                    <td>
+                      {item.imagen_url ? (
+                        <img
+                          src={item.imagen_url}
+                          alt={item.nombre}
+                          style={{ width: '40px', height: '40px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #e2e8f0', display: 'block' }}
+                          onError={(e) => { e.target.style.display = 'none'; }}
+                        />
+                      ) : (
+                        <div style={{ width: '40px', height: '40px', borderRadius: '6px', background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
+                          <ImageIcon size={18} />
+                        </div>
+                      )}
+                    </td>
                     <td><strong style={{ color: '#2563eb', fontFamily: 'monospace' }}>{item.sku}</strong></td>
                     <td style={{ fontWeight: '600' }}>{item.nombre}</td>
                     <td><span className="badge badge-info">{catNombre}</span></td>
@@ -336,6 +371,58 @@ export default function ProductosCatalogoPage() {
                     <strong>Múltiples Almacenes:</strong> Al guardar este producto, se inicializará automáticamente su stock en <strong>Almacén Principal</strong> y <strong>Planta 3</strong>.
                   </span>
                 </div>
+
+                {/* SUBIDA DE IMAGEN DE PRODUCTO */}
+                <div style={{ background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '14px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '700', color: '#0f172a', fontSize: '13px', marginBottom: '8px' }}>
+                    <ImageIcon size={16} color="#0284c7" /> Imagen del Producto (Catálogo E-commerce)
+                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                    {imagePreview ? (
+                      <div style={{ position: 'relative', width: '74px', height: '74px', borderRadius: '8px', overflow: 'hidden', border: '1px solid #cbd5e1', flexShrink: 0 }}>
+                        <img src={imagePreview} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <button
+                          type="button"
+                          onClick={() => { setImageFile(null); setImagePreview(null); }}
+                          style={{ position: 'absolute', top: '2px', right: '2px', background: 'rgba(0,0,0,0.65)', border: 'none', borderRadius: '50%', color: '#fff', width: '20px', height: '20px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                          title="Quitar imagen"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ width: '74px', height: '74px', borderRadius: '8px', background: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b', border: '1px dashed #94a3b8', flexShrink: 0 }}>
+                        <Camera size={24} />
+                      </div>
+                    )}
+                    <div style={{ flex: 1 }}>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        id="producto-imagen-input"
+                        style={{ display: 'none' }}
+                        onChange={(e) => {
+                          const file = e.target.files[0];
+                          if (file) {
+                            setImageFile(file);
+                            setImagePreview(URL.createObjectURL(file));
+                          }
+                        }}
+                      />
+                      <label
+                        htmlFor="producto-imagen-input"
+                        className="secondary-btn"
+                        style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12.5px', padding: '6px 12px' }}
+                      >
+                        <Upload size={14} /> {imagePreview ? 'Cambiar Imagen' : 'Seleccionar Imagen'}
+                      </label>
+                      <p style={{ margin: '6px 0 0 0', fontSize: '11px', color: '#64748b' }}>
+                        JPG, PNG o WEBP (hasta 4MB). Se mostrará a los responsables de área en su carrito.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="form-row">
                   <div className="form-group">
                     <label>Código SKU / Parte</label>

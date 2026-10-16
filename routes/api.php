@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\CategoriaController;
 use App\Http\Controllers\Api\EntradaController;
 use App\Http\Controllers\Api\KardexController;
 use App\Http\Controllers\Api\PersonalController;
+use App\Http\Controllers\Api\PreRequerimientoController;
 use App\Http\Controllers\Api\ProductoController;
 use App\Http\Controllers\Api\ProveedorController;
 use App\Http\Controllers\Api\RequerimientoController;
@@ -12,6 +13,7 @@ use App\Http\Controllers\Api\SalidaController;
 use App\Http\Controllers\Api\TransferenciaController;
 use App\Http\Controllers\Api\UnidadMedidaController;
 use App\Http\Controllers\Api\AlmacenController;
+use App\Http\Controllers\Api\UserController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -47,6 +49,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('personal/{id}/historial-salidas', [PersonalController::class, 'historialSalidas']);
     Route::get('personal/{id}/historial-pdf', [PersonalController::class, 'exportHistorialPdf']);
 
+    // Gestión de Usuarios del Sistema y Roles (CRUD & RBAC)
+    Route::patch('usuarios/{id}/estado', [UserController::class, 'toggleEstado']);
+    Route::apiResource('usuarios', UserController::class);
+
     Route::apiResource('entradas', EntradaController::class)->only(['index', 'store', 'show']);
     Route::get('entradas/{id}/pdf', [EntradaController::class, 'exportPdf']);
     Route::get('ingresos/{id}/pdf', [EntradaController::class, 'exportPdf']);
@@ -66,6 +72,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('requerimientos/{id}/cerrar-faltante', [RequerimientoController::class, 'cerrarFaltante']);
     Route::put('requerimientos/{id}/recotizar-saldo', [RequerimientoController::class, 'recotizarSaldo']);
     Route::put('requerimientos/{id}/anular-saldo', [RequerimientoController::class, 'anularSaldo']);
+
+    Route::apiResource('pre-requerimientos', PreRequerimientoController::class)->only(['index', 'store', 'show']);
+    Route::put('pre-requerimientos/{id}/aprobar', [PreRequerimientoController::class, 'aprobar']);
+    Route::put('pre-requerimientos/{id}/pasar-cotizacion', [PreRequerimientoController::class, 'pasarACotizacion']);
+    Route::post('pre-requerimientos/{id}/procesar-salida', [PreRequerimientoController::class, 'procesarSalida']);
+    Route::put('pre-requerimientos/{id}/rechazar', [PreRequerimientoController::class, 'rechazar']);
 
     Route::get('kardex/producto/{productoId}', [KardexController::class, 'getByProducto']);
     Route::get('kardex/producto/{productoId}/exportar', [KardexController::class, 'exportarKardexProductoCsv']);
@@ -90,6 +102,9 @@ Route::apiResource('unidades-medida', UnidadMedidaController::class);
 Route::apiResource('personal', PersonalController::class);
 Route::get('personal/{id}/historial-salidas', [PersonalController::class, 'historialSalidas']);
 Route::get('personal/{id}/historial-pdf', [PersonalController::class, 'exportHistorialPdf']);
+
+Route::patch('usuarios/{id}/estado', [UserController::class, 'toggleEstado']);
+Route::apiResource('usuarios', UserController::class);
 Route::apiResource('entradas', EntradaController::class)->only(['index', 'store', 'show']);
 Route::get('entradas/{id}/pdf', [EntradaController::class, 'exportPdf']);
 Route::get('ingresos/{id}/pdf', [EntradaController::class, 'exportPdf']);
@@ -106,6 +121,12 @@ Route::put('requerimientos/{id}/rechazar', [RequerimientoController::class, 'rec
 Route::put('requerimientos/{id}/cerrar-faltante', [RequerimientoController::class, 'cerrarFaltante']);
 Route::put('requerimientos/{id}/recotizar-saldo', [RequerimientoController::class, 'recotizarSaldo']);
 Route::put('requerimientos/{id}/anular-saldo', [RequerimientoController::class, 'anularSaldo']);
+
+Route::apiResource('pre-requerimientos', PreRequerimientoController::class)->only(['index', 'store', 'show']);
+Route::put('pre-requerimientos/{id}/aprobar', [PreRequerimientoController::class, 'aprobar']);
+Route::put('pre-requerimientos/{id}/pasar-cotizacion', [PreRequerimientoController::class, 'pasarACotizacion']);
+Route::post('pre-requerimientos/{id}/procesar-salida', [PreRequerimientoController::class, 'procesarSalida']);
+Route::put('pre-requerimientos/{id}/rechazar', [PreRequerimientoController::class, 'rechazar']);
 Route::get('kardex/producto/{productoId}', [KardexController::class, 'getByProducto']);
 Route::get('kardex/producto/{productoId}/exportar', [KardexController::class, 'exportarKardexProductoCsv']);
 Route::get('kardex/producto/{productoId}/pdf', [KardexController::class, 'exportarKardexProductoPdf']);

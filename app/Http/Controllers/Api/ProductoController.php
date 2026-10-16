@@ -75,6 +75,7 @@ class ProductoController extends Controller
             'unidades_medida_id' => 'required|exists:unidades_medida,id',
             'sku' => 'required|string|max:100|unique:productos,sku',
             'nombre' => 'required|string|max:255',
+            'imagen' => 'nullable',
             'stock_actual' => 'nullable|numeric|min:0',
             'stock_minimo' => 'nullable|numeric|min:0',
             'costo_unitario' => 'nullable|numeric|min:0',
@@ -82,6 +83,13 @@ class ProductoController extends Controller
             'unidad_secundaria_id' => 'nullable|exists:unidades_medida,id',
             'factor_conversion' => 'nullable|numeric|min:1',
         ]);
+
+        $imagenPath = null;
+        if ($request->hasFile('imagen')) {
+            $imagenPath = $request->file('imagen')->store('productos', 'public');
+        } elseif ($request->filled('imagen') && is_string($request->input('imagen'))) {
+            $imagenPath = $request->input('imagen');
+        }
 
         $stockInicial = (float) ($validated['stock_actual'] ?? 0);
         $costoUnitario = (float) ($validated['costo_unitario'] ?? 0);
@@ -94,6 +102,7 @@ class ProductoController extends Controller
             'unidades_medida_id' => $validated['unidades_medida_id'],
             'sku' => $validated['sku'],
             'nombre' => $validated['nombre'],
+            'imagen' => $imagenPath,
             'stock_actual' => $stockInicial,
             'stock_minimo' => $validated['stock_minimo'] ?? 0,
             'costo_unitario' => $costoUnitario,
@@ -187,6 +196,7 @@ class ProductoController extends Controller
             'unidades_medida_id' => 'sometimes|required|exists:unidades_medida,id',
             'sku' => "sometimes|required|string|max:100|unique:productos,sku,{$id}",
             'nombre' => 'sometimes|required|string|max:255',
+            'imagen' => 'nullable',
             'stock_actual' => 'nullable|numeric|min:0',
             'stock_minimo' => 'nullable|numeric|min:0',
             'costo_unitario' => 'nullable|numeric|min:0',
@@ -194,6 +204,12 @@ class ProductoController extends Controller
             'unidad_secundaria_id' => 'nullable|exists:unidades_medida,id',
             'factor_conversion' => 'nullable|numeric|min:1',
         ]);
+
+        if ($request->hasFile('imagen')) {
+            $validated['imagen'] = $request->file('imagen')->store('productos', 'public');
+        } elseif ($request->filled('imagen') && is_string($request->input('imagen'))) {
+            $validated['imagen'] = $request->input('imagen');
+        }
 
         if (array_key_exists('maneja_conversion', $validated)) {
             $validated['maneja_conversion'] = filter_var($validated['maneja_conversion'], FILTER_VALIDATE_BOOLEAN);

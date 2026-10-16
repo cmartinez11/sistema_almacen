@@ -18,6 +18,7 @@ class Producto extends Model
         'unidades_medida_id',
         'sku',
         'nombre',
+        'imagen',
         'stock_actual',
         'stock_minimo',
         'costo_unitario',
@@ -29,7 +30,19 @@ class Producto extends Model
     protected $appends = [
         'stock_equivalente',
         'ultimo_precio_compra',
+        'imagen_url',
     ];
+
+    public function getImagenUrlAttribute(): ?string
+    {
+        if (empty($this->imagen)) {
+            return null;
+        }
+        if (str_starts_with($this->imagen, 'http://') || str_starts_with($this->imagen, 'https://') || str_starts_with($this->imagen, 'data:image')) {
+            return $this->imagen;
+        }
+        return url('storage/' . ltrim($this->imagen, '/'));
+    }
 
     protected function casts(): array
     {

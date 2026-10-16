@@ -29,6 +29,16 @@ class AuthController extends Controller
             ], 401);
         }
 
+        if (isset($user->activo) && !$user->activo) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'El acceso para este usuario ha sido bloqueado o desactivado. Consulte con el Administrador.',
+            ], 403);
+        }
+
+        // Cargar relaciones relevantes
+        $user->load(['personal', 'almacen']);
+
         // Emitir nuevo token Sanctum para el usuario
         $token = $user->createToken('auth_token')->plainTextToken;
 

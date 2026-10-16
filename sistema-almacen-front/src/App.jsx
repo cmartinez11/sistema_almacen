@@ -18,11 +18,13 @@ import KardexValorizadoPage from './pages/movimientos/KardexValorizadoPage';
 import RequerimientosPage from './pages/requerimientos/RequerimientosPage';
 import ProveedoresPage from './pages/proveedores/ProveedoresPage';
 import PersonalPage from './pages/personal/PersonalPage';
+import UsuariosPage from './pages/usuarios/UsuariosPage';
 import ReportesPage from './pages/reportes/ReportesPage';
 import StockCriticoPage from './pages/reportes/StockCriticoPage';
+import SolicitudesAreaPage from './pages/requerimientos/SolicitudesAreaPage';
 import UnauthorizedPage from './pages/UnauthorizedPage';
 
-import { ROLES } from './config/rbacConfig';
+import { ROLES, normalizeRole } from './config/rbacConfig';
 import { AlmacenProvider } from './context/AlmacenContext';
 
 function App() {
@@ -212,6 +214,20 @@ function App() {
           }
         />
 
+        {/* GESTIÓN DE USUARIOS Y ACCESOS (RBAC) */}
+        <Route
+          path="/usuarios"
+          element={
+            <ProtectedRoute
+              allowedRoles={[ROLES.ADMINISTRADOR]}
+            >
+              <MainLayout>
+                <UsuariosPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
         {/* 7. REPORTES, KARDEX & ANALÍTICA */}
         <Route
           path="/reportes"
@@ -276,6 +292,25 @@ function App() {
           }
         />
 
+        {/* SOLICITUDES DE ÁREA (E-COMMERCE) */}
+        <Route
+          path="/solicitudes-area"
+          element={
+            <ProtectedRoute
+              allowedRoles={[
+                ROLES.RESPONSABLE_AREA,
+                ROLES.ADMINISTRADOR,
+                ROLES.COMPRAS,
+                ROLES.ALMACENERO,
+              ]}
+            >
+              <MainLayout>
+                <SolicitudesAreaPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+
         {/* RUTA 403 NO AUTORIZADO */}
         <Route
           path="/unauthorized"
@@ -291,7 +326,11 @@ function App() {
           path="*"
           element={
             localStorage.getItem('token') ? (
-              <Navigate to="/dashboard" replace />
+              normalizeRole(JSON.parse(localStorage.getItem('user') || '{}')) === ROLES.RESPONSABLE_AREA ? (
+                <Navigate to="/solicitudes-area" replace />
+              ) : (
+                <Navigate to="/dashboard" replace />
+              )
             ) : (
               <Navigate to="/login" replace />
             )
